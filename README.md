@@ -18,6 +18,7 @@ Servicos locais:
 ## Firebase
 
 O projeto usa Firebase Authentication, Cloud Firestore, Cloud Functions e Firebase Hosting.
+Em producao, o app bloqueia abertura sem Firebase configurado para evitar uso real sem login e isolamento por usuario.
 
 Variaveis esperadas em `.env`:
 
@@ -37,6 +38,12 @@ No Console do Firebase, habilite:
 - Cloud Firestore.
 - Cloud Functions.
 - Firebase Hosting.
+
+## Vercel
+
+O arquivo `vercel.json` ja define build Vite, saida `dist` e rewrite para SPA.
+
+Cadastre no Vercel as mesmas variaveis `VITE_FIREBASE_*` listadas acima. Sem elas, o app mostra uma tela de bloqueio de producao em vez de cair em modo local.
 
 ## Dados
 

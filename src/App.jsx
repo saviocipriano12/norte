@@ -120,6 +120,11 @@ const number = (value) =>
     maximumFractionDigits: 2,
   }).format(Number(value || 0))
 
+const parseAmountInput = (value) => {
+  const normalized = String(value || '').trim().replace(/\./g, '').replace(',', '.')
+  return Number(normalized || 0)
+}
+
 const normalizeText = (text) =>
   text
     .toLowerCase()
@@ -145,27 +150,27 @@ const draftNeedsReview = (draft) => !draft.amount || !draft.accountId || !draft.
 
 const buildCatalog = (profile) => {
   const common = [
-    { id: createId(), name: 'Atendimento', type: 'service', price: 80, cost: 12, stock: null, minStock: null },
-    { id: createId(), name: 'Produto principal', type: 'product', price: 50, cost: 25, stock: 20, minStock: 6 },
+    { id: createId(), name: 'Servi?o principal', type: 'service', price: 0, cost: 0, stock: null, minStock: null },
+    { id: createId(), name: 'Produto principal', type: 'product', price: 0, cost: 0, stock: 0, minStock: 0 },
   ]
 
   const byProfile = {
     services: [
-      { id: createId(), name: 'Manutenção', type: 'service', price: 120, cost: 20, stock: null, minStock: null },
-      { id: createId(), name: 'Material de atendimento', type: 'material', price: 0, cost: 18, stock: 12, minStock: 4 },
+      { id: createId(), name: 'Servi?o principal', type: 'service', price: 0, cost: 0, stock: null, minStock: null },
+      { id: createId(), name: 'Material de atendimento', type: 'material', price: 0, cost: 0, stock: 0, minStock: 0 },
     ],
     products: [
-      { id: createId(), name: 'Camiseta', type: 'product', price: 89, cost: 42, stock: 18, minStock: 5 },
-      { id: createId(), name: 'Fornecedor geral', type: 'material', price: 0, cost: 30, stock: 10, minStock: 3 },
+      { id: createId(), name: 'Produto principal', type: 'product', price: 0, cost: 0, stock: 0, minStock: 0 },
+      { id: createId(), name: 'Mercadoria para revenda', type: 'material', price: 0, cost: 0, stock: 0, minStock: 0 },
     ],
     production: [
-      { id: createId(), name: 'Hambúrguer', type: 'product', price: 25, cost: 11, stock: 25, minStock: 8 },
-      { id: createId(), name: 'Carne', type: 'material', price: 0, cost: 32, stock: 6, minStock: 2 },
-      { id: createId(), name: 'Pão', type: 'material', price: 0, cost: 0.9, stock: 40, minStock: 12 },
+      { id: createId(), name: 'Produto produzido', type: 'product', price: 0, cost: 0, stock: 0, minStock: 0 },
+      { id: createId(), name: 'Material principal', type: 'material', price: 0, cost: 0, stock: 0, minStock: 0 },
+      { id: createId(), name: 'Embalagem ou insumo', type: 'material', price: 0, cost: 0, stock: 0, minStock: 0 },
     ],
     projects: [
-      { id: createId(), name: 'Projeto mensal', type: 'project', price: 2000, cost: 500, stock: null, minStock: null },
-      { id: createId(), name: 'Hora técnica', type: 'service', price: 120, cost: 20, stock: null, minStock: null },
+      { id: createId(), name: 'Projeto principal', type: 'project', price: 0, cost: 0, stock: null, minStock: null },
+      { id: createId(), name: 'Hora t?cnica', type: 'service', price: 0, cost: 0, stock: null, minStock: null },
     ],
     hybrid: common,
   }
@@ -176,91 +181,24 @@ const buildCatalog = (profile) => {
 const starterData = {
   onboarded: false,
   user: {
-    name: 'Você',
-    businessName: 'Meu negócio',
+    name: 'Voc?',
+    businessName: 'Meu neg?cio',
     profile: 'hybrid',
   },
   accounts: [
-    { id: 'personal-wallet', name: 'Carteira pessoal', scope: 'personal', type: 'cash', balance: 320 },
-    { id: 'business-cash', name: 'Caixa do negócio', scope: 'business', type: 'cash', balance: 850 },
-    { id: 'bank', name: 'Banco', scope: 'both', type: 'bank', balance: 1200 },
-    { id: 'card', name: 'Cartão', scope: 'personal', type: 'card', balance: 0 },
+    { id: 'personal-wallet', name: 'Carteira pessoal', scope: 'personal', type: 'cash', balance: 0 },
+    { id: 'business-cash', name: 'Caixa do neg?cio', scope: 'business', type: 'cash', balance: 0 },
+    { id: 'bank', name: 'Banco', scope: 'both', type: 'bank', balance: 0 },
+    { id: 'card', name: 'Cart?o', scope: 'personal', type: 'card', balance: 0 },
   ],
-  transactions: [
-    {
-      id: createId(),
-      type: 'income',
-      scope: 'business',
-      kind: 'sale',
-      title: 'Venda inicial',
-      category: 'Venda',
-      amount: 240,
-      date: today(),
-      accountId: 'business-cash',
-      quantity: 3,
-      itemName: 'Produto principal',
-      note: 'Exemplo para sentir o app funcionando',
-    },
-    {
-      id: createId(),
-      type: 'expense',
-      scope: 'business',
-      kind: 'expense',
-      title: 'Material',
-      category: 'Material',
-      amount: 76,
-      date: today(),
-      accountId: 'business-cash',
-      quantity: 1,
-      itemName: 'Material',
-      note: 'Exemplo editavel',
-    },
-  ],
+  transactions: [],
   catalog: buildCatalog('hybrid'),
-  goals: [
-    { id: createId(), title: 'Reserva do negocio', target: 3000, current: 850, due: '2026-08-30', scope: 'business' },
-    { id: createId(), title: 'Organizar vida pessoal', target: 1500, current: 320, due: '2026-07-15', scope: 'personal' },
-  ],
-  clients: [
-    { id: createId(), name: 'Cliente exemplo', phone: '', receivable: 180, due: today(), status: 'pending', notes: 'Exemplo de cliente com valor a receber' },
-  ],
-  sales: [
-    {
-      id: createId(),
-      clientName: 'Cliente exemplo',
-      itemId: '',
-      itemName: 'Produto principal',
-      quantity: 2,
-      unitPrice: 50,
-      total: 100,
-      status: 'paid',
-      date: today(),
-      due: today(),
-      notes: 'Venda exemplo',
-    },
-  ],
-  suppliers: [
-    { id: createId(), name: 'Fornecedor exemplo', phone: '', payable: 120, notes: 'Fornecedor inicial' },
-  ],
-  purchases: [
-    {
-      id: createId(),
-      supplierName: 'Fornecedor exemplo',
-      itemId: '',
-      itemName: 'Material',
-      quantity: 1,
-      unitCost: 76,
-      total: 76,
-      status: 'paid',
-      date: today(),
-      due: today(),
-      notes: 'Compra exemplo',
-    },
-  ],
-  bills: [
-    { id: createId(), title: 'Fornecedor exemplo', scope: 'business', type: 'payable', amount: 120, due: today(), status: 'open', category: 'Mercadoria' },
-    { id: createId(), title: 'Receber cliente exemplo', scope: 'business', type: 'receivable', amount: 180, due: today(), status: 'open', category: 'Recebimento' },
-  ],
+  goals: [],
+  clients: [],
+  sales: [],
+  suppliers: [],
+  purchases: [],
+  bills: [],
   settings: {
     dailyReminder: true,
     privacyMode: false,
@@ -448,11 +386,29 @@ function App() {
     const profileId = form.get('profile')
     const businessName = form.get('businessName') || 'Meu negócio'
     const name = form.get('name') || 'Você'
+    const businessBalance = parseAmountInput(form.get('businessBalance'))
+    const personalBalance = parseAmountInput(form.get('personalBalance'))
+    const controlsStock = form.get('controlsStock') === 'yes'
+    const goalTitle = String(form.get('goalTitle') || '').trim()
+    const goalTarget = parseAmountInput(form.get('goalTarget'))
+    const catalog = buildCatalog(profileId).map((item) =>
+      controlsStock || item.type === 'service' || item.type === 'project'
+        ? item
+        : { ...item, stock: null, minStock: null },
+    )
     setData({
       ...starterData,
       onboarded: true,
       user: { name, businessName, profile: profileId },
-      catalog: buildCatalog(profileId),
+      accounts: starterData.accounts.map((account) => {
+        if (account.id === 'business-cash') return { ...account, balance: businessBalance }
+        if (account.id === 'personal-wallet') return { ...account, balance: personalBalance }
+        return account
+      }),
+      catalog,
+      goals: goalTitle && goalTarget
+        ? [{ id: createId(), title: goalTitle, target: goalTarget, current: 0, due: today(), scope: 'business' }]
+        : [],
     })
   }
 
@@ -545,7 +501,7 @@ function App() {
       kind: manual.type === 'income' ? 'sale' : 'expense',
       title: manual.title,
       category: manual.category,
-      amount: Number(manual.amount),
+      amount: parseAmountInput(manual.amount),
       date: manual.date || today(),
       accountId: manual.accountId || getDefaultAccountId(data.accounts, manual.scope),
       quantity: 1,
@@ -581,7 +537,7 @@ function App() {
         {
           id: createId(),
           title: newGoal.title,
-          target: Number(newGoal.target),
+          target: parseAmountInput(newGoal.target),
           current: 0,
           due: newGoal.due || today(),
           scope: defaultScope,
@@ -602,10 +558,10 @@ function App() {
           id: createId(),
           name: newCatalogItem.name,
           type: newCatalogItem.type,
-          price: Number(newCatalogItem.price || 0),
-          cost: Number(newCatalogItem.cost || 0),
-          stock: newCatalogItem.type === 'service' || newCatalogItem.type === 'project' ? null : Number(newCatalogItem.stock || 0),
-          minStock: newCatalogItem.type === 'service' || newCatalogItem.type === 'project' ? null : Number(newCatalogItem.minStock || 0),
+          price: parseAmountInput(newCatalogItem.price),
+          cost: parseAmountInput(newCatalogItem.cost),
+          stock: newCatalogItem.type === 'service' || newCatalogItem.type === 'project' ? null : parseAmountInput(newCatalogItem.stock),
+          minStock: newCatalogItem.type === 'service' || newCatalogItem.type === 'project' ? null : parseAmountInput(newCatalogItem.minStock),
         },
       ],
     }))
@@ -627,7 +583,7 @@ function App() {
   }
 
   function contributeToGoal(goal) {
-    const amount = Number(goalDrafts[goal.id] || 0)
+    const amount = parseAmountInput(goalDrafts[goal.id])
     if (!amount) return
     setData((current) => ({
       ...current,
@@ -668,7 +624,7 @@ function App() {
           name: newAccount.name,
           scope: newAccount.scope,
           type: newAccount.type,
-          balance: Number(newAccount.balance || 0),
+          balance: parseAmountInput(newAccount.balance),
         },
       ],
     }))
@@ -707,9 +663,9 @@ function App() {
           id: createId(),
           name: newClient.name,
           phone: newClient.phone,
-          receivable: Number(newClient.receivable || 0),
+          receivable: parseAmountInput(newClient.receivable),
           due: newClient.due || today(),
-          status: Number(newClient.receivable || 0) > 0 ? 'pending' : 'active',
+          status: parseAmountInput(newClient.receivable) > 0 ? 'pending' : 'active',
           notes: newClient.notes,
         },
       ],
@@ -770,7 +726,7 @@ function App() {
           title: newBill.title,
           type: newBill.type,
           scope: newBill.scope,
-          amount: Number(newBill.amount || 0),
+          amount: parseAmountInput(newBill.amount),
           due: newBill.due || today(),
           status: 'open',
           category: newBill.category,
@@ -794,7 +750,7 @@ function App() {
           category: bill.category,
           amount: Number(bill.amount || 0),
           date: today(),
-          accountId: bill.scope === 'personal' ? 'personal-wallet' : 'business-cash',
+          accountId: getDefaultAccountId(current.accounts, bill.scope),
           quantity: 1,
           itemName: bill.title,
           note: bill.type === 'receivable' ? 'Conta recebida' : 'Conta paga',
@@ -822,8 +778,8 @@ function App() {
   async function saveSale(event) {
     event.preventDefault()
     const item = data.catalog.find((catalogItem) => catalogItem.id === newSale.itemId) || data.catalog[0]
-    const quantity = Number(newSale.quantity || 1)
-    const unitPrice = Number(newSale.unitPrice || item?.price || 0)
+    const quantity = parseAmountInput(newSale.quantity || 1)
+    const unitPrice = parseAmountInput(newSale.unitPrice || item?.price || 0)
     const total = quantity * unitPrice
     if (!newSale.clientName || !item || !total) return
     if (item.stock !== null && Number(item.stock || 0) < quantity) {
@@ -862,8 +818,8 @@ function App() {
   async function savePurchase(event) {
     event.preventDefault()
     const item = data.catalog.find((catalogItem) => catalogItem.id === newPurchase.itemId) || data.catalog[0]
-    const quantity = Number(newPurchase.quantity || 1)
-    const unitCost = Number(newPurchase.unitCost || item?.cost || 0)
+    const quantity = parseAmountInput(newPurchase.quantity || 1)
+    const unitCost = parseAmountInput(newPurchase.unitCost || item?.cost || 0)
     const total = quantity * unitCost
     if (!newPurchase.supplierName || !item || !total) return
     const nextState = await createPurchaseOperation({ data, purchase: newPurchase }).catch((error) => {
@@ -1284,6 +1240,42 @@ function Onboarding({ onComplete }) {
           <label>
             Nome do negócio
             <input name="businessName" placeholder="Ex: Studio Ana" />
+          </label>
+        </div>
+
+        <div className="form-grid two">
+          <label>
+            Caixa inicial do negócio
+            <input name="businessBalance" placeholder="0,00" inputMode="decimal" />
+          </label>
+          <label>
+            Dinheiro pessoal inicial
+            <input name="personalBalance" placeholder="0,00" inputMode="decimal" />
+          </label>
+        </div>
+
+        <fieldset>
+          <legend>Operação inicial</legend>
+          <div className="segmented wide stock-choice">
+            <label className="radio-segment">
+              <input type="radio" name="controlsStock" value="yes" defaultChecked />
+              Controlo estoque
+            </label>
+            <label className="radio-segment">
+              <input type="radio" name="controlsStock" value="no" />
+              Não controlo estoque
+            </label>
+          </div>
+        </fieldset>
+
+        <div className="form-grid two">
+          <label>
+            Primeira meta
+            <input name="goalTitle" placeholder="Ex: Reserva do negócio" />
+          </label>
+          <label>
+            Valor da meta
+            <input name="goalTarget" placeholder="3000" inputMode="decimal" />
           </label>
         </div>
 
@@ -1844,8 +1836,8 @@ function SalesView({ sales, clients, catalog, newSale, setNewSale, saveSale, del
   const pendingSales = sales.filter((sale) => sale.status === 'pending')
   const totalPaid = paidSales.reduce((acc, sale) => acc + Number(sale.total || 0), 0)
   const totalPending = pendingSales.reduce((acc, sale) => acc + Number(sale.total || 0), 0)
-  const quantity = Number(newSale.quantity || 1)
-  const unitPrice = Number(newSale.unitPrice || selectedItem?.price || 0)
+  const quantity = parseAmountInput(newSale.quantity || 1)
+  const unitPrice = parseAmountInput(newSale.unitPrice || selectedItem?.price || 0)
   const saleTotal = quantity * unitPrice
   const saleCost = quantity * Number(selectedItem?.cost || 0)
   const saleMargin = saleTotal - saleCost
@@ -1997,8 +1989,8 @@ function PurchasesView({ purchases, suppliers, catalog, newPurchase, setNewPurch
   const pendingPurchases = purchases.filter((purchase) => purchase.status === 'pending')
   const totalPaid = paidPurchases.reduce((acc, purchase) => acc + Number(purchase.total || 0), 0)
   const totalPending = pendingPurchases.reduce((acc, purchase) => acc + Number(purchase.total || 0), 0)
-  const quantity = Number(newPurchase.quantity || 1)
-  const unitCost = Number(newPurchase.unitCost || selectedItem?.cost || 0)
+  const quantity = parseAmountInput(newPurchase.quantity || 1)
+  const unitCost = parseAmountInput(newPurchase.unitCost || selectedItem?.cost || 0)
   const purchaseTotal = quantity * unitCost
   const purchaseStockAfter = selectedItem?.stock === null ? null : Number(selectedItem?.stock || 0) + quantity
   const purchaseCreatesCashOut = newPurchase.status === 'paid'
@@ -2430,6 +2422,9 @@ function ClientsView({ clients, newClient, setNewClient, saveClient, receiveClie
 
 function BillsView({ bills, totals, newBill, setNewBill, saveBill, payBill, deleteBill, updateBill }) {
   const openBills = bills.filter((bill) => bill.status !== 'paid')
+  const todayDate = today()
+  const overdueBills = openBills.filter((bill) => bill.due < todayDate)
+  const dueTodayBills = openBills.filter((bill) => bill.due === todayDate)
   const sorted = [...bills].sort((a, b) => `${a.due}`.localeCompare(`${b.due}`))
 
   return (
@@ -2445,6 +2440,7 @@ function BillsView({ bills, totals, newBill, setNewBill, saveBill, payBill, dele
         <Metric title="A pagar" value={money(totals.billsPayable)} icon={ArrowDownRight} tone="red" />
         <Metric title="A receber" value={money(totals.billsReceivable)} icon={ArrowUpRight} tone="green" />
         <Metric title="Em aberto" value={openBills.length} icon={ClipboardList} tone="amber" />
+        <Metric title="Vencidas hoje" value={overdueBills.length + dueTodayBills.length} icon={AlertCircle} tone="red" />
       </div>
 
       <div className="content-grid">
@@ -2454,8 +2450,24 @@ function BillsView({ bills, totals, newBill, setNewBill, saveBill, payBill, dele
             <Bell size={18} />
           </div>
           <div className="catalog-list">
-            {sorted.map((bill) => (
-              <article key={bill.id} className="editable-row">
+            {sorted.length ? sorted.map((bill) => {
+              const billState = bill.status === 'paid' ? 'paid' : bill.due < todayDate ? 'overdue' : bill.due === todayDate ? 'today' : 'open'
+              return (
+              <article key={bill.id} className={`editable-row bill-editor ${billState}`}>
+                <div className="bill-status-line">
+                  <span className={`pill ${bill.type === 'receivable' ? 'income' : 'expense'}`}>
+                    {bill.type === 'receivable' ? 'Receber' : 'Pagar'}
+                  </span>
+                  <strong>
+                    {billState === 'paid'
+                      ? 'Concluída'
+                      : billState === 'overdue'
+                        ? 'Vencida'
+                        : billState === 'today'
+                          ? 'Vence hoje'
+                          : 'Aberta'}
+                  </strong>
+                </div>
                 <div className="form-grid">
                   <label>
                     Tipo
@@ -2470,7 +2482,7 @@ function BillsView({ bills, totals, newBill, setNewBill, saveBill, payBill, dele
                   </label>
                   <label>
                     Valor
-                    <input value={bill.amount} onChange={(event) => updateBill(bill.id, { amount: Number(event.target.value || 0) })} inputMode="decimal" />
+                    <input value={bill.amount} onChange={(event) => updateBill(bill.id, { amount: parseAmountInput(event.target.value) })} inputMode="decimal" />
                   </label>
                   <label>
                     Vencimento
@@ -2505,7 +2517,9 @@ function BillsView({ bills, totals, newBill, setNewBill, saveBill, payBill, dele
                   </div>
                 </div>
               </article>
-            ))}
+            )}) : (
+              <p className="empty-state">Nenhuma conta cadastrada ainda.</p>
+            )}
           </div>
         </section>
 
