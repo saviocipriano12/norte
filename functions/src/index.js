@@ -34,6 +34,10 @@ function workspaceIdFor(uid, workspaceId) {
   return workspaceId || `${uid}_default`
 }
 
+function defaultWorkspaceIdFor(uid) {
+  return `${uid}_default`
+}
+
 function legacyWorkspaceRef(uid) {
   return db.collection('users').doc(uid).collection('workspaces').doc('default')
 }
@@ -49,24 +53,26 @@ async function loadState(uid, workspaceId) {
 }
 
 async function saveState(uid, workspaceId, previousState, nextState, action) {
-  await ensureWorkspace(uid, workspaceId, nextState)
-  await Promise.all(WORKSPACE_COLLECTIONS.map((key) => syncWorkspaceCollection(workspaceId, key, nextState[key] || [])))
+  const tenantState = withTenantMeta(uid, workspaceId, nextState)
+  await ensureWorkspace(uid, workspaceId, tenantState)
+  await Promise.all(WORKSPACE_COLLECTIONS.map((key) => syncWorkspaceCollection(workspaceId, key, tenantState[key] || [])))
   await legacyWorkspaceRef(uid).set(
     {
-      state: nextState,
+      state: tenantState,
       updatedAt: FieldValue.serverTimestamp(),
       version: 2,
       lastAction: action,
     },
     { merge: true },
   )
-  await writeAuditLog(uid, workspaceId, action, previousState, nextState)
-  return nextState
+  await writeAuditLog(uid, workspaceId, action, previousState, tenantState)
+  return tenantState
 }
 
 async function runOperation(request, action, operation) {
   const uid = requireUser(request)
   const workspaceId = workspaceIdFor(uid, request.data?.workspaceId)
+  await assertWorkspaceAccess(uid, workspaceId)
   const state = request.data?.state || (await loadState(uid, workspaceId))
   if (!state) throw new HttpsError('failed-precondition', 'Workspace nao encontrado.')
   const nextState = operation(state)
@@ -74,7 +80,35 @@ async function runOperation(request, action, operation) {
   return { data: nextState }
 }
 
+async function assertWorkspaceAccess(uid, workspaceId) {
+  const workspaceRef = db.collection('workspaces').doc(workspaceId)
+  const workspaceSnapshot = await workspaceRef.get()
+  if (!workspaceSnapshot.exists) {
+    if (workspaceId === defaultWorkspaceIdFor(uid)) return
+    throw new HttpsError('permission-denied', 'Workspace nao existe ou voce nao tem acesso.')
+  }
+
+  const memberSnapshot = await workspaceRef.collection('members').doc(uid).get()
+  if (!memberSnapshot.exists) {
+    throw new HttpsError('permission-denied', 'Voce nao faz parte deste workspace.')
+  }
+}
+
 async function ensureWorkspace(uid, workspaceId, state) {
+  const workspaceRef = db.collection('workspaces').doc(workspaceId)
+  const workspaceSnapshot = await workspaceRef.get()
+  let existingMemberRole = 'owner'
+
+  if (workspaceSnapshot.exists) {
+    const memberSnapshot = await workspaceRef.collection('members').doc(uid).get()
+    if (!memberSnapshot.exists) {
+      throw new HttpsError('permission-denied', 'Voce nao pode alterar este workspace.')
+    }
+    existingMemberRole = memberSnapshot.data().role || 'member'
+  } else if (workspaceId !== defaultWorkspaceIdFor(uid)) {
+    throw new HttpsError('permission-denied', 'Somente o workspace padrao pode ser criado automaticamente.')
+  }
+
   await db.collection('users').doc(uid).set(
     {
       defaultWorkspaceId: workspaceId,
@@ -82,18 +116,24 @@ async function ensureWorkspace(uid, workspaceId, state) {
     },
     { merge: true },
   )
-  await db.collection('workspaces').doc(workspaceId).set(
-    {
-      ownerId: uid,
-      name: state.user?.businessName || 'Meu negocio',
-      profile: state.user?.profile || 'hybrid',
-      updatedAt: FieldValue.serverTimestamp(),
-    },
+  await workspaceRef.set(
+    workspaceSnapshot.exists
+      ? {
+          name: state.user?.businessName || 'Meu negocio',
+          profile: state.user?.profile || 'hybrid',
+          updatedAt: FieldValue.serverTimestamp(),
+        }
+      : {
+          ownerId: uid,
+          name: state.user?.businessName || 'Meu negocio',
+          profile: state.user?.profile || 'hybrid',
+          updatedAt: FieldValue.serverTimestamp(),
+        },
     { merge: true },
   )
-  await db.collection('workspaces').doc(workspaceId).collection('members').doc(uid).set(
+  await workspaceRef.collection('members').doc(uid).set(
     {
-      role: 'owner',
+      role: workspaceSnapshot.exists ? existingMemberRole : 'owner',
       userId: uid,
       updatedAt: FieldValue.serverTimestamp(),
     },
@@ -146,6 +186,19 @@ async function commitBatches(actions) {
 
 function cleanForFirestore(value) {
   return JSON.parse(JSON.stringify(value))
+}
+
+function withTenantMeta(uid, workspaceId, state) {
+  return {
+    ...state,
+    meta: {
+      ...(state.meta || {}),
+      ownerId: uid,
+      workspaceId,
+      storage: 'firebase-functions',
+      savedAt: new Date().toISOString(),
+    },
+  }
 }
 
 async function writeAuditLog(uid, workspaceId, action, previousState, nextState) {

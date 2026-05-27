@@ -40,6 +40,7 @@ import {
   registerWithEmail,
   saveFirebaseState,
   watchAuth,
+  workspaceIdFor,
 } from './firebaseClient'
 import {
   cancelPurchaseService,
@@ -139,6 +140,8 @@ const getBusinessBalance = (accountBalances) =>
 
 const getPersonalBalance = (accountBalances) =>
   accountBalances.filter((account) => account.scope !== 'business').reduce((acc, account) => acc + Number(account.current || 0), 0)
+
+const draftNeedsReview = (draft) => !draft.amount || !draft.accountId || !draft.category || !draft.title
 
 const buildCatalog = (profile) => {
   const common = [
@@ -280,6 +283,7 @@ function migrateData(data) {
     purchases: data?.purchases || starterData.purchases,
     bills: data?.bills || starterData.bills,
     settings: { ...starterData.settings, ...(data?.settings || {}) },
+    meta: { ...(data?.meta || {}) },
   }
 }
 
@@ -393,6 +397,8 @@ function App() {
     notes: '',
   })
 
+  const productionNeedsFirebase = import.meta.env.PROD && !firebaseEnabled
+
   const transactions = useMemo(
     () => [...data.transactions].sort((a, b) => `${b.date}`.localeCompare(`${a.date}`)),
     [data.transactions],
@@ -434,6 +440,7 @@ function App() {
 
   const lowStock = data.catalog.filter((item) => item.stock !== null && Number(item.stock) <= Number(item.minStock || 0))
   const profile = profileOptions.find((item) => item.id === data.user.profile) || profileOptions[4]
+  const activeWorkspaceId = data.meta?.workspaceId || (firebaseUser ? workspaceIdFor(firebaseUser.uid) : 'local-dev')
 
   function completeOnboarding(event) {
     event.preventDefault()
@@ -502,6 +509,30 @@ function App() {
       }
     })
     setDrafts((current) => current.filter((item) => item.id !== draft.id))
+  }
+
+  function confirmAllDrafts() {
+    const readyDrafts = drafts.filter((draft) => !draftNeedsReview(draft))
+    if (!readyDrafts.length) return
+    setData((current) => {
+      const transactionsToAdd = readyDrafts.map((draft) => ({ ...draft, id: createId(), source: 'confirmed' }))
+      const nextCatalog = current.catalog.map((item) => {
+        const itemDrafts = readyDrafts.filter((draft) => normalizeText(item.name) === normalizeText(draft.itemName || draft.title))
+        if (!itemDrafts.length || item.stock === null) return item
+        const movement = itemDrafts.reduce((acc, draft) => {
+          if (draft.type === 'income' && draft.kind === 'sale') return acc - Number(draft.quantity || 1)
+          if (draft.type === 'expense' && draft.kind === 'purchase') return acc + Number(draft.quantity || 1)
+          return acc
+        }, 0)
+        return { ...item, stock: Math.max(0, Number(item.stock || 0) + movement) }
+      })
+      return {
+        ...current,
+        catalog: nextCatalog,
+        transactions: [...transactionsToAdd, ...current.transactions],
+      }
+    })
+    setDrafts((current) => current.filter((draft) => draftNeedsReview(draft)))
   }
 
   function saveManual(event) {
@@ -795,6 +826,10 @@ function App() {
     const unitPrice = Number(newSale.unitPrice || item?.price || 0)
     const total = quantity * unitPrice
     if (!newSale.clientName || !item || !total) return
+    if (item.stock !== null && Number(item.stock || 0) < quantity) {
+      const confirmed = window.confirm('O estoque atual e menor que a quantidade vendida. Salvar mesmo assim e zerar o estoque?')
+      if (!confirmed) return
+    }
     const nextState = await createSaleOperation({ data, sale: newSale }).catch((error) => {
       window.alert(`Não consegui salvar a venda: ${error.message}`)
       return null
@@ -892,6 +927,10 @@ function App() {
     }
   }
 
+  if (productionNeedsFirebase) {
+    return <FirebaseRequiredScreen />
+  }
+
   if (firebaseEnabled && authReady && !firebaseUser) {
     return <AuthScreen />
   }
@@ -939,6 +978,11 @@ function App() {
             <h1>{data.user.businessName}</h1>
           </div>
           <div className="topbar-actions">
+            <div className="tenant-chip" title={activeWorkspaceId}>
+              <span>{firebaseEnabled ? 'Conta autenticada' : 'Modo local'}</span>
+              <strong>{firebaseUser?.email || 'Sem Firebase'}</strong>
+              <small>{activeWorkspaceId}</small>
+            </div>
             <span className={`data-status ${dataStatus}`}>
               {firebaseEnabled ? (dataStatus === 'ready' ? 'Salvando no Firebase' : 'Firebase offline') : dataStatus === 'ready' ? 'Salvando na API' : 'API offline'}
             </span>
@@ -965,7 +1009,10 @@ function App() {
             accountBalances={accountBalances}
             lowStock={lowStock}
             goals={data.goals}
+            bills={data.bills}
+            clients={data.clients}
             onGoLaunch={() => setActive('launch')}
+            onNavigate={setActive}
           />
         )}
 
@@ -979,6 +1026,7 @@ function App() {
             drafts={drafts}
             setDrafts={setDrafts}
             confirmDraft={confirmDraft}
+            confirmAllDrafts={confirmAllDrafts}
             manual={manual}
             setManual={setManual}
             saveManual={saveManual}
@@ -1127,6 +1175,30 @@ function Brand() {
   )
 }
 
+function FirebaseRequiredScreen() {
+  return (
+    <main className="auth-screen">
+      <section className="welcome-band">
+        <Brand />
+        <div className="welcome-copy">
+          <p className="eyebrow">Configuração obrigatória</p>
+          <h1>O Norte precisa do Firebase para rodar em produção.</h1>
+          <p>Configure as variáveis `VITE_FIREBASE_*` no Vercel para ativar login, tenant e banco real por usuário.</p>
+        </div>
+      </section>
+      <section className="auth-panel">
+        <div>
+          <p className="eyebrow">SaaS protegido</p>
+          <h2>Sem Firebase, sem dados reais.</h2>
+        </div>
+        <p className="form-error">
+          Esta tela bloqueia produção sem autenticação para evitar que usuários compartilhem dados em modo local.
+        </p>
+      </section>
+    </main>
+  )
+}
+
 function AuthScreen() {
   const [mode, setMode] = useState('login')
   const [email, setEmail] = useState('')
@@ -1244,10 +1316,45 @@ function Onboarding({ onComplete }) {
   )
 }
 
-function TodayView({ totals, transactions, accountBalances, lowStock, goals, onGoLaunch }) {
+function TodayView({ totals, transactions, accountBalances, lowStock, goals, bills, clients, onGoLaunch, onNavigate }) {
   const profit = totals.todayIncome - totals.todayExpense
   const nextGoal = goals[0]
   const businessBalance = getBusinessBalance(accountBalances)
+  const todayDate = today()
+  const openBills = bills.filter((bill) => bill.status !== 'paid')
+  const overdueBills = openBills.filter((bill) => bill.due < todayDate)
+  const dueTodayBills = openBills.filter((bill) => bill.due === todayDate)
+  const pendingClients = clients.filter((client) => Number(client.receivable || 0) > 0)
+  const priorities = [
+    ...overdueBills.slice(0, 2).map((bill) => ({
+      tone: 'danger',
+      title: `${bill.type === 'payable' ? 'Pagar vencido' : 'Receber vencido'}: ${bill.title}`,
+      detail: `${money(bill.amount)} venceu em ${new Date(`${bill.due}T12:00:00`).toLocaleDateString('pt-BR')}`,
+      action: 'Contas',
+      target: 'bills',
+    })),
+    ...dueTodayBills.slice(0, 2).map((bill) => ({
+      tone: 'warning',
+      title: `${bill.type === 'payable' ? 'Pagar hoje' : 'Receber hoje'}: ${bill.title}`,
+      detail: `${money(bill.amount)} vence hoje`,
+      action: 'Contas',
+      target: 'bills',
+    })),
+    ...lowStock.slice(0, 2).map((item) => ({
+      tone: 'warning',
+      title: `${item.name} em estoque baixo`,
+      detail: `Atual: ${number(item.stock)} • mínimo: ${number(item.minStock)}`,
+      action: 'Comprar',
+      target: 'purchases',
+    })),
+    ...pendingClients.slice(0, 2).map((client) => ({
+      tone: 'info',
+      title: `${client.name} tem valor em aberto`,
+      detail: `${money(client.receivable)} para receber`,
+      action: 'Clientes',
+      target: 'clients',
+    })),
+  ].slice(0, 5)
   const dailySummary = `Resumo de hoje: entrou ${money(totals.todayIncome)}, saiu ${money(totals.todayExpense)} e o resultado estimado foi ${money(profit)}. Caixa do negócio: ${money(businessBalance)}.`
 
   function copySummary() {
@@ -1283,6 +1390,30 @@ function TodayView({ totals, transactions, accountBalances, lowStock, goals, onG
       </div>
 
       <div className="content-grid">
+        <section className="panel">
+          <div className="panel-heading">
+            <h3>Precisa de atenção</h3>
+            <AlertCircle size={18} />
+          </div>
+          <div className="priority-list">
+            {priorities.length ? (
+              priorities.map((item) => (
+                <article className={`priority-item ${item.tone}`} key={`${item.title}-${item.detail}`}>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <span>{item.detail}</span>
+                  </div>
+                  <button className="mini-action" type="button" onClick={() => onNavigate(item.target)}>
+                    {item.action}
+                  </button>
+                </article>
+              ))
+            ) : (
+              <p className="empty-state">Nada urgente agora. Continue registrando os movimentos do dia.</p>
+            )}
+          </div>
+        </section>
+
         <section className="panel">
           <div className="panel-heading">
             <h3>Próxima ação</h3>
@@ -1361,6 +1492,7 @@ function LaunchView({
   drafts,
   setDrafts,
   confirmDraft,
+  confirmAllDrafts,
   manual,
   setManual,
   saveManual,
@@ -1369,6 +1501,11 @@ function LaunchView({
   updateTransaction,
   deleteTransaction,
 }) {
+  const readyCount = drafts.filter((draft) => !draftNeedsReview(draft)).length
+  const reviewCount = drafts.length - readyCount
+  const parsedIncome = drafts.filter((draft) => draft.type === 'income').reduce((acc, draft) => acc + Number(draft.amount || 0), 0)
+  const parsedExpense = drafts.filter((draft) => draft.type === 'expense').reduce((acc, draft) => acc + Number(draft.amount || 0), 0)
+
   const updateDraft = (id, patch) => {
     setDrafts((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)))
   }
@@ -1403,11 +1540,20 @@ function LaunchView({
         <section className="panel">
           <div className="panel-heading">
             <h3>Confirmar antes de salvar</h3>
-            <Check size={18} />
+            <button className="secondary-action" type="button" onClick={confirmAllDrafts} disabled={!readyCount}>
+              <Check size={18} />
+              Confirmar prontos
+            </button>
+          </div>
+          <div className="draft-summary">
+            <span>{readyCount} prontos</span>
+            <span>{reviewCount} para revisar</span>
+            <span>Entradas {money(parsedIncome)}</span>
+            <span>Saídas {money(parsedExpense)}</span>
           </div>
           <div className="draft-list">
             {drafts.map((draft) => (
-              <article className="draft-item" key={draft.id}>
+              <article className={`draft-item ${draftNeedsReview(draft) ? 'needs-review' : ''}`} key={draft.id}>
                 <div className="draft-edit">
                   <span className={`pill ${draft.type}`}>{draft.type === 'income' ? 'Entrada' : draft.type === 'expense' ? 'Saída' : 'Transferência'}</span>
                   <div className="form-grid">
@@ -1701,6 +1847,10 @@ function SalesView({ sales, clients, catalog, newSale, setNewSale, saveSale, del
   const quantity = Number(newSale.quantity || 1)
   const unitPrice = Number(newSale.unitPrice || selectedItem?.price || 0)
   const saleTotal = quantity * unitPrice
+  const saleCost = quantity * Number(selectedItem?.cost || 0)
+  const saleMargin = saleTotal - saleCost
+  const saleStockAfter = selectedItem?.stock === null ? null : Math.max(0, Number(selectedItem?.stock || 0) - quantity)
+  const saleCreatesCash = newSale.status === 'paid'
 
   function selectItem(itemId) {
     const item = catalog.find((catalogItem) => catalogItem.id === itemId)
@@ -1788,6 +1938,18 @@ function SalesView({ sales, clients, catalog, newSale, setNewSale, saveSale, del
               <span>Total da venda</span>
               <strong>{money(saleTotal)}</strong>
             </div>
+            <div className="impact-box">
+              <span>{saleCreatesCash ? 'Entra no caixa agora' : 'Cria conta a receber'}</span>
+              <span>Margem estimada: <strong className={saleMargin >= 0 ? 'positive' : 'negative'}>{money(saleMargin)}</strong></span>
+              <span>
+                {saleStockAfter === null
+                  ? 'Item sem controle de estoque'
+                  : `Estoque após salvar: ${number(saleStockAfter)}`}
+              </span>
+              {saleStockAfter !== null && saleStockAfter <= Number(selectedItem?.minStock || 0) && (
+                <span className="warning-text">Estoque ficará em nível crítico.</span>
+              )}
+            </div>
             <button className="primary-action" type="submit">
               <Check size={18} />
               Salvar venda
@@ -1838,6 +2000,8 @@ function PurchasesView({ purchases, suppliers, catalog, newPurchase, setNewPurch
   const quantity = Number(newPurchase.quantity || 1)
   const unitCost = Number(newPurchase.unitCost || selectedItem?.cost || 0)
   const purchaseTotal = quantity * unitCost
+  const purchaseStockAfter = selectedItem?.stock === null ? null : Number(selectedItem?.stock || 0) + quantity
+  const purchaseCreatesCashOut = newPurchase.status === 'paid'
 
   function selectItem(itemId) {
     const item = catalog.find((catalogItem) => catalogItem.id === itemId)
@@ -1924,6 +2088,15 @@ function PurchasesView({ purchases, suppliers, catalog, newPurchase, setNewPurch
             <div className="sale-total expense-total">
               <span>Total da compra</span>
               <strong>{money(purchaseTotal)}</strong>
+            </div>
+            <div className="impact-box expense-impact">
+              <span>{purchaseCreatesCashOut ? 'Sai do caixa agora' : 'Cria conta a pagar'}</span>
+              <span>Custo unitário atualizado: <strong>{money(unitCost)}</strong></span>
+              <span>
+                {purchaseStockAfter === null
+                  ? 'Item sem controle de estoque'
+                  : `Estoque após salvar: ${number(purchaseStockAfter)}`}
+              </span>
             </div>
             <button className="primary-action" type="submit">
               <Check size={18} />

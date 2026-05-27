@@ -64,7 +64,7 @@ function stateRef(userId) {
   return doc(db, 'users', userId, 'workspaces', 'default')
 }
 
-function workspaceIdFor(userId) {
+export function workspaceIdFor(userId) {
   return `${userId}_default`
 }
 
@@ -76,23 +76,46 @@ export async function loadFirebaseState(userId) {
     WORKSPACE_COLLECTIONS.map(async (key) => [key, await readWorkspaceCollection(workspaceId, key)]),
   )
   const collections = Object.fromEntries(collectionEntries.filter(([, items]) => items.length > 0))
-  return legacyState ? { ...legacyState, ...collections } : Object.keys(collections).length ? collections : null
+  const tenantMeta = {
+    ownerId: userId,
+    workspaceId,
+    storage: 'firebase',
+  }
+  return legacyState
+    ? { ...legacyState, ...collections, meta: { ...(legacyState.meta || {}), ...tenantMeta } }
+    : Object.keys(collections).length
+      ? { ...collections, meta: tenantMeta }
+      : null
 }
 
 export async function saveFirebaseState(userId, state) {
   const workspaceId = workspaceIdFor(userId)
-  await ensureWorkspace(userId, workspaceId, state)
-  await Promise.all(WORKSPACE_COLLECTIONS.map((key) => syncWorkspaceCollection(workspaceId, key, state[key] || [])))
+  const tenantState = withTenantMeta(userId, workspaceId, state)
+  await ensureWorkspace(userId, workspaceId, tenantState)
+  await Promise.all(WORKSPACE_COLLECTIONS.map((key) => syncWorkspaceCollection(workspaceId, key, tenantState[key] || [])))
   await setDoc(
     stateRef(userId),
     {
-      state,
+      state: tenantState,
       updatedAt: serverTimestamp(),
       version: 2,
     },
     { merge: true },
   )
-  return state
+  return tenantState
+}
+
+function withTenantMeta(userId, workspaceId, state) {
+  return {
+    ...state,
+    meta: {
+      ...(state.meta || {}),
+      ownerId: userId,
+      workspaceId,
+      storage: 'firebase',
+      savedAt: new Date().toISOString(),
+    },
+  }
 }
 
 async function ensureWorkspace(userId, workspaceId, state) {

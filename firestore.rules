@@ -10,8 +10,12 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
-    match /users/{userId}/workspaces/{workspaceId} {
+    match /users/{userId} {
       allow read, write: if isOwner(userId);
+
+      match /workspaces/{workspaceId} {
+        allow read, write: if isOwner(userId);
+      }
     }
 
     match /workspaces/{workspaceId} {
@@ -24,6 +28,12 @@ service cloud.firestore {
           exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid));
         allow create, update, delete: if signedIn() &&
           get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
+      }
+
+      match /auditLogs/{logId} {
+        allow read: if signedIn() &&
+          exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid));
+        allow write: if false;
       }
 
       match /{collection}/{documentId} {
