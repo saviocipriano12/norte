@@ -31,7 +31,7 @@ async function runFirebaseOperation(name, payload, fallback) {
 
 export async function createSaleOperation({ data, sale }) {
   if (firebaseEnabled) {
-    return runFirebaseOperation('createSale', { state: data, sale }, () => applySaleOperation(data, sale))
+    return runFirebaseOperation('createSale', { sale }, () => applySaleOperation(data, sale))
   }
 
   const payload = await fetchJson('/api/sales', {
@@ -43,7 +43,7 @@ export async function createSaleOperation({ data, sale }) {
 
 export async function cancelSaleService({ data, saleId }) {
   if (firebaseEnabled) {
-    return runFirebaseOperation('cancelSale', { state: data, saleId }, () => cancelSaleOperation(data, saleId))
+    return runFirebaseOperation('cancelSale', { saleId }, () => cancelSaleOperation(data, saleId))
   }
 
   const payload = await fetchJson('/api/sales/cancel', {
@@ -55,7 +55,7 @@ export async function cancelSaleService({ data, saleId }) {
 
 export async function createPurchaseOperation({ data, purchase }) {
   if (firebaseEnabled) {
-    return runFirebaseOperation('createPurchase', { state: data, purchase }, () => applyPurchaseOperation(data, purchase))
+    return runFirebaseOperation('createPurchase', { purchase }, () => applyPurchaseOperation(data, purchase))
   }
 
   const payload = await fetchJson('/api/purchases', {
@@ -67,7 +67,7 @@ export async function createPurchaseOperation({ data, purchase }) {
 
 export async function cancelPurchaseService({ data, purchaseId }) {
   if (firebaseEnabled) {
-    return runFirebaseOperation('cancelPurchase', { state: data, purchaseId }, () => cancelPurchaseOperation(data, purchaseId))
+    return runFirebaseOperation('cancelPurchase', { purchaseId }, () => cancelPurchaseOperation(data, purchaseId))
   }
 
   const payload = await fetchJson('/api/purchases/cancel', {

@@ -73,7 +73,7 @@ async function runOperation(request, action, operation) {
   const uid = requireUser(request)
   const workspaceId = workspaceIdFor(uid, request.data?.workspaceId)
   await assertWorkspaceAccess(uid, workspaceId)
-  const state = request.data?.state || (await loadState(uid, workspaceId))
+  const state = await loadState(uid, workspaceId)
   if (!state) throw new HttpsError('failed-precondition', 'Workspace nao encontrado.')
   const nextState = operation(state)
   await saveState(uid, workspaceId, state, nextState, action)
