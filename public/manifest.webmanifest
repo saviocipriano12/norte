@@ -1,0 +1,18 @@
+{
+  "name": "Norte Financas Claras",
+  "short_name": "Norte",
+  "description": "Financas pessoais, negocio, clientes, contas, metas e lancamentos por texto ou voz.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f7f4",
+  "theme_color": "#116149",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
