@@ -3,6 +3,7 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
 } from 'firebase/auth'
@@ -54,6 +55,10 @@ export function loginWithEmail(email, password) {
 
 export function registerWithEmail(email, password) {
   return createUserWithEmailAndPassword(auth, email, password)
+}
+
+export function resetFirebasePassword(email) {
+  return sendPasswordResetEmail(auth, email)
 }
 
 export function logoutFirebase() {

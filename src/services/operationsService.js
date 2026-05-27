@@ -1,6 +1,8 @@
 import { applyPurchaseOperation, applySaleOperation, cancelPurchaseOperation, cancelSaleOperation } from '../domain/norteDomain'
 import { callFunction, firebaseEnabled, functions } from '../firebaseClient'
 
+const production = import.meta.env.PROD
+
 async function fetchJson(url, options) {
   const response = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
@@ -11,16 +13,25 @@ async function fetchJson(url, options) {
 }
 
 async function callCloudOperation(name, payload) {
-  if (!firebaseEnabled || !functions) return null
+  if (!firebaseEnabled || !functions) throw new Error('Backend Firebase indisponivel.')
   const result = await callFunction(name, payload)
   return result.data
 }
 
+async function runFirebaseOperation(name, payload, fallback) {
+  try {
+    const cloud = await callCloudOperation(name, payload)
+    if (cloud?.data) return cloud.data
+    throw new Error('Resposta invalida do backend.')
+  } catch (error) {
+    if (production) throw new Error(error.message || 'Operacao nao confirmada pelo backend.', { cause: error })
+    return fallback()
+  }
+}
+
 export async function createSaleOperation({ data, sale }) {
   if (firebaseEnabled) {
-    const cloud = await callCloudOperation('createSale', { state: data, sale }).catch(() => null)
-    if (cloud?.data) return cloud.data
-    return applySaleOperation(data, sale)
+    return runFirebaseOperation('createSale', { state: data, sale }, () => applySaleOperation(data, sale))
   }
 
   const payload = await fetchJson('/api/sales', {
@@ -32,9 +43,7 @@ export async function createSaleOperation({ data, sale }) {
 
 export async function cancelSaleService({ data, saleId }) {
   if (firebaseEnabled) {
-    const cloud = await callCloudOperation('cancelSale', { state: data, saleId }).catch(() => null)
-    if (cloud?.data) return cloud.data
-    return cancelSaleOperation(data, saleId)
+    return runFirebaseOperation('cancelSale', { state: data, saleId }, () => cancelSaleOperation(data, saleId))
   }
 
   const payload = await fetchJson('/api/sales/cancel', {
@@ -46,9 +55,7 @@ export async function cancelSaleService({ data, saleId }) {
 
 export async function createPurchaseOperation({ data, purchase }) {
   if (firebaseEnabled) {
-    const cloud = await callCloudOperation('createPurchase', { state: data, purchase }).catch(() => null)
-    if (cloud?.data) return cloud.data
-    return applyPurchaseOperation(data, purchase)
+    return runFirebaseOperation('createPurchase', { state: data, purchase }, () => applyPurchaseOperation(data, purchase))
   }
 
   const payload = await fetchJson('/api/purchases', {
@@ -60,9 +67,7 @@ export async function createPurchaseOperation({ data, purchase }) {
 
 export async function cancelPurchaseService({ data, purchaseId }) {
   if (firebaseEnabled) {
-    const cloud = await callCloudOperation('cancelPurchase', { state: data, purchaseId }).catch(() => null)
-    if (cloud?.data) return cloud.data
-    return cancelPurchaseOperation(data, purchaseId)
+    return runFirebaseOperation('cancelPurchase', { state: data, purchaseId }, () => cancelPurchaseOperation(data, purchaseId))
   }
 
   const payload = await fetchJson('/api/purchases/cancel', {

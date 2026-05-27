@@ -38,6 +38,7 @@ import {
   loginWithEmail,
   logoutFirebase,
   registerWithEmail,
+  resetFirebasePassword,
   saveFirebaseState,
   watchAuth,
   workspaceIdFor,
@@ -309,6 +310,7 @@ function App() {
   const [active, setActive] = useState('today')
   const [quickText, setQuickText] = useState('')
   const [drafts, setDrafts] = useState([])
+  const [captureError, setCaptureError] = useState('')
   const [defaultScope, setDefaultScope] = useState('business')
   const [isListening, setIsListening] = useState(false)
   const recognitionRef = useRef(null)
@@ -427,7 +429,11 @@ function App() {
   }
 
   async function parseQuickText() {
-    const parsed = await parseEntry({ text: quickText, data, defaultScope })
+    setCaptureError('')
+    const parsed = await parseEntry({ text: quickText, data, defaultScope }).catch((error) => {
+      setCaptureError(error.message || 'Nao consegui interpretar agora.')
+      return []
+    })
     setDrafts(parsed)
     if (parsed.length) setQuickText('')
   }
@@ -447,10 +453,14 @@ function App() {
     recognition.onerror = () => setIsListening(false)
     recognition.onend = () => setIsListening(false)
     recognition.onresult = async (event) => {
+      setCaptureError('')
       const transcript = Array.from(event.results)
         .map((result) => result[0].transcript)
         .join(' ')
-      const parsed = await parseEntry({ text: transcript, data, defaultScope })
+      const parsed = await parseEntry({ text: transcript, data, defaultScope }).catch((error) => {
+        setCaptureError(error.message || 'Nao consegui interpretar esse audio.')
+        return []
+      })
       setQuickText(transcript)
       setDrafts(parsed)
     }
@@ -997,6 +1007,7 @@ function App() {
             setDrafts={setDrafts}
             confirmDraft={confirmDraft}
             confirmAllDrafts={confirmAllDrafts}
+            captureError={captureError}
             manual={manual}
             setManual={setManual}
             saveManual={saveManual}
@@ -1174,11 +1185,13 @@ function AuthScreen() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(false)
 
   async function submit(event) {
     event.preventDefault()
     setError('')
+    setNotice('')
     setLoading(true)
     try {
       if (mode === 'login') {
@@ -1186,6 +1199,24 @@ function AuthScreen() {
       } else {
         await registerWithEmail(email, password)
       }
+    } catch (authError) {
+      setError(authErrorMessage(authError))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function resetPassword() {
+    setError('')
+    setNotice('')
+    if (!email) {
+      setError('Digite seu email para receber o link de recuperação.')
+      return
+    }
+    setLoading(true)
+    try {
+      await resetFirebasePassword(email)
+      setNotice('Enviamos um link de recuperação para seu email.')
     } catch (authError) {
       setError(authErrorMessage(authError))
     } finally {
@@ -1217,10 +1248,16 @@ function AuthScreen() {
           <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required />
         </label>
         {error && <p className="form-error">{error}</p>}
+        {notice && <p className="form-success">{notice}</p>}
         <button className="primary-action" type="submit" disabled={loading}>
           <Check size={18} />
           {loading ? 'Aguarde...' : mode === 'login' ? 'Entrar' : 'Criar conta'}
         </button>
+        {mode === 'login' && (
+          <button className="text-action" type="button" onClick={resetPassword} disabled={loading}>
+            Esqueci minha senha
+          </button>
+        )}
         <button className="text-action" type="button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
           {mode === 'login' ? 'Criar uma nova conta' : 'Já tenho conta'}
         </button>
@@ -1499,6 +1536,7 @@ function LaunchView({
   setDrafts,
   confirmDraft,
   confirmAllDrafts,
+  captureError,
   manual,
   setManual,
   saveManual,
@@ -1541,6 +1579,8 @@ function LaunchView({
           </button>
         </div>
       </section>
+
+      {captureError && <p className="form-error">{captureError}</p>}
 
       {drafts.length > 0 && (
         <section className="panel">

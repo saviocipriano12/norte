@@ -1172,6 +1172,14 @@ label {
   background: #f8dfda;
 }
 
+.form-success {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #116149;
+  background: #e4f3eb;
+}
+
 .text-action {
   border: 0;
   cursor: pointer;
