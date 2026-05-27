@@ -148,6 +148,20 @@ const getPersonalBalance = (accountBalances) =>
 
 const draftNeedsReview = (draft) => !draft.amount || !draft.accountId || !draft.category || !draft.title
 
+const authErrorMessage = (error) => {
+  const code = error?.code || ''
+  if (code.includes('invalid-email')) return 'Digite um email válido.'
+  if (code.includes('missing-password')) return 'Digite sua senha.'
+  if (code.includes('weak-password')) return 'Use uma senha com pelo menos 6 caracteres.'
+  if (code.includes('email-already-in-use')) return 'Esse email já tem uma conta.'
+  if (code.includes('user-not-found') || code.includes('wrong-password') || code.includes('invalid-credential')) {
+    return 'Email ou senha incorretos.'
+  }
+  if (code.includes('too-many-requests')) return 'Muitas tentativas. Espere um pouco e tente novamente.'
+  if (code.includes('network-request-failed')) return 'Sem conexão com o Firebase agora.'
+  return 'Não consegui entrar agora. Confira os dados e tente novamente.'
+}
+
 const buildCatalog = (profile) => {
   const common = [
     { id: createId(), name: 'Servi?o principal', type: 'service', price: 0, cost: 0, stock: null, minStock: null },
@@ -1173,7 +1187,7 @@ function AuthScreen() {
         await registerWithEmail(email, password)
       }
     } catch (authError) {
-      setError(authError.message || 'Não consegui entrar agora.')
+      setError(authErrorMessage(authError))
     } finally {
       setLoading(false)
     }
