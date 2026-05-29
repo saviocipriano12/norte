@@ -98,10 +98,12 @@ npm run dev                  # app + API local
 npm run client               # somente Vite
 npm run server               # somente API local
 npm test                     # testes de dominio
+npm run verify:prod          # lint + testes + build com checagem de env
 npm run lint                 # lint
 npm run build                # build web
 npm run functions:sync-domain
 npm run deploy:firebase      # build + sync dominio + firebase deploy
+npm run deploy:vercel        # deploy Vercel em producao
 ```
 
 ## Validacao
@@ -115,3 +117,9 @@ npm run build
 ```
 
 O `npm audit` das Functions ainda aponta vulnerabilidade moderada transitiva em pacotes Google/Firebase ligados a `uuid`. `npm audit fix` nao resolve sem downgrade quebrador sugerido pelo npm. A dependencia direta esta nas versoes atuais (`firebase-admin` e `firebase-functions`).
+
+Guia de deploy:
+
+```text
+docs/DEPLOY.md
+```
