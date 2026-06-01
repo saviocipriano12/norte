@@ -1531,6 +1531,48 @@ function TodayView({ totals, transactions, accountBalances, lowStock, goals, bil
           <TransactionList items={transactions.slice(0, 5)} compact />
         </section>
       </div>
+
+      <div className="support-grid">
+        <section className="support-card">
+          <div className="support-icon">
+            <ClipboardList size={20} />
+          </div>
+          <div>
+            <p className="eyebrow">Rotina recomendada</p>
+            <h3>Use em 3 momentos do dia</h3>
+            <ol>
+              <li>Registre entradas e saidas assim que acontecerem.</li>
+              <li>Revise contas a pagar e receber no fim do dia.</li>
+              <li>Abra Relatorios para ver o que merece atencao.</li>
+            </ol>
+          </div>
+        </section>
+
+        <section className="support-card">
+          <div className="support-icon">
+            <Send size={20} />
+          </div>
+          <div>
+            <p className="eyebrow">Suporte beta</p>
+            <h3>Feedback direto</h3>
+            <p>Envie erros, ideias ou dificuldade de uso para evoluirmos o produto com casos reais.</p>
+            <a className="secondary-action" href="mailto:suporte.altum@gmail.com?subject=Feedback%20Norte%20Beta">
+              Enviar feedback
+            </a>
+          </div>
+        </section>
+
+        <section className="support-card">
+          <div className="support-icon">
+            <Landmark size={20} />
+          </div>
+          <div>
+            <p className="eyebrow">Privacidade</p>
+            <h3>Seus dados ficam na sua conta</h3>
+            <p>O workspace e salvo por usuario no Firebase. Voce pode exportar backup local quando quiser.</p>
+          </div>
+        </section>
+      </div>
     </section>
   )
 }
