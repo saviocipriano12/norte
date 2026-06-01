@@ -991,6 +991,7 @@ function App() {
 
         {active === 'home' && (
           <TodayView
+            user={data.user}
             totals={totals}
             transactions={transactions}
             accountBalances={accountBalances}
@@ -1431,35 +1432,46 @@ function Onboarding({ onComplete }) {
   )
 }
 
-function TodayView({ totals, transactions, accountBalances, lowStock, goals, bills, clients, onGoLaunch, onNavigate }) {
+function TodayView({ user, totals, transactions, accountBalances, lowStock, goals, bills, clients, onGoLaunch, onNavigate }) {
   const profit = totals.todayIncome - totals.todayExpense
   const nextGoal = goals[0]
   const businessBalance = getBusinessBalance(accountBalances)
+  const personalBalance = getPersonalBalance(accountBalances)
+  const totalBalance = businessBalance + personalBalance
   const todayDate = today()
   const openBills = bills.filter((bill) => bill.status !== 'paid')
   const overdueBills = openBills.filter((bill) => bill.due < todayDate)
   const dueTodayBills = openBills.filter((bill) => bill.due === todayDate)
   const pendingClients = clients.filter((client) => Number(client.receivable || 0) > 0)
+  const openReceivables = totals.billsReceivable + totals.receivable
+  const openPayables = totals.billsPayable
   const hasStarted = transactions.length > 0 || goals.length > 0 || bills.length > 0 || clients.length > 0
   const activationSteps = [
-    { label: 'Criar primeiro lancamento', done: transactions.length > 0, target: 'launch' },
+    { label: 'Criar primeiro lancamento', done: transactions.length > 0, target: 'register' },
     { label: 'Definir uma meta', done: goals.length > 0, target: 'goals' },
-    { label: 'Cadastrar conta ou recebimento', done: bills.length > 0 || clients.length > 0, target: 'bills' },
+    { label: 'Cadastrar conta ou recebimento', done: bills.length > 0 || clients.length > 0, target: 'pay' },
   ]
+  const attentionCount = overdueBills.length + dueTodayBills.length + lowStock.length + pendingClients.length
+  const balanceMessage = totalBalance >= 0
+    ? 'Seu dinheiro esta organizado entre pessoal e negocio.'
+    : 'Seu saldo total esta negativo. Priorize entradas e reduza saidas.'
+  const cashMessage = openReceivables >= openPayables
+    ? `Voce tem ${money(openReceivables)} para receber contra ${money(openPayables)} a pagar.`
+    : `Atencao: ha ${money(openPayables)} a pagar e ${money(openReceivables)} previsto para receber.`
   const priorities = [
     ...overdueBills.slice(0, 2).map((bill) => ({
       tone: 'danger',
       title: `${bill.type === 'payable' ? 'Pagar vencido' : 'Receber vencido'}: ${bill.title}`,
       detail: `${money(bill.amount)} venceu em ${new Date(`${bill.due}T12:00:00`).toLocaleDateString('pt-BR')}`,
       action: 'Contas',
-      target: 'bills',
+      target: 'pay',
     })),
     ...dueTodayBills.slice(0, 2).map((bill) => ({
       tone: 'warning',
       title: `${bill.type === 'payable' ? 'Pagar hoje' : 'Receber hoje'}: ${bill.title}`,
       detail: `${money(bill.amount)} vence hoje`,
       action: 'Contas',
-      target: 'bills',
+      target: 'pay',
     })),
     ...lowStock.slice(0, 2).map((item) => ({
       tone: 'warning',
@@ -1473,10 +1485,16 @@ function TodayView({ totals, transactions, accountBalances, lowStock, goals, bil
       title: `${client.name} tem valor em aberto`,
       detail: `${money(client.receivable)} para receber`,
       action: 'Clientes',
-      target: 'clients',
+      target: 'pay',
     })),
   ].slice(0, 5)
-  const dailySummary = `Resumo de hoje: entrou ${money(totals.todayIncome)}, saiu ${money(totals.todayExpense)} e o resultado estimado foi ${money(profit)}. Caixa do negócio: ${money(businessBalance)}.`
+  const quickActions = [
+    { label: 'Registrar', helper: 'voz ou texto', icon: Plus, action: onGoLaunch },
+    { label: 'Falar agora', helper: 'lancamento rapido', icon: Mic, action: onGoLaunch },
+    { label: 'Pagar/receber', helper: `${overdueBills.length} vencidas`, icon: Bell, action: () => onNavigate('pay') },
+    { label: 'Movimentos', helper: 'historico completo', icon: ReceiptText, action: () => onNavigate('movements') },
+  ]
+  const dailySummary = `Resumo de hoje: entrou ${money(totals.todayIncome)}, saiu ${money(totals.todayExpense)} e o resultado estimado foi ${money(profit)}. Saldo total: ${money(totalBalance)}.`
 
   function copySummary() {
     navigator.clipboard?.writeText(dailySummary)
@@ -1484,24 +1502,59 @@ function TodayView({ totals, transactions, accountBalances, lowStock, goals, bil
 
   return (
     <section className="screen">
-      <div className="hero-panel">
-        <div>
-          <p className="eyebrow">Resumo de hoje</p>
-          <h2>{profit >= 0 ? 'O dia está sob controle.' : 'Hora de segurar os gastos.'}</h2>
-          <p>
-            Entrou {money(totals.todayIncome)}, saiu {money(totals.todayExpense)} e o resultado estimado ficou em{' '}
-            <strong>{money(profit)}</strong>.
-          </p>
+      <section className="home-hero">
+        <div className="home-balance">
+          <div className="home-greeting">
+            <p className="eyebrow">Inicio</p>
+            <span>{user?.businessName || 'Seu Norte financeiro'}</span>
+          </div>
+          <span className="balance-label">Saldo total</span>
+          <strong className="balance-value">{money(totalBalance)}</strong>
+          <p>{balanceMessage}</p>
+          <div className="balance-split">
+            <span>
+              <Wallet size={16} />
+              Pessoal {money(personalBalance)}
+            </span>
+            <span>
+              <Store size={16} />
+              Negocio {money(businessBalance)}
+            </span>
+          </div>
         </div>
-        <button className="primary-action" type="button" onClick={onGoLaunch}>
-          <Mic size={18} />
-          Falar lançamento
-        </button>
-        <button className="secondary-action" type="button" onClick={copySummary}>
-          <FileText size={18} />
-          Copiar resumo
-        </button>
-      </div>
+        <div className="home-status-card">
+          <div>
+            <p className="eyebrow">Agora</p>
+            <h2>{attentionCount ? `${attentionCount} ponto${attentionCount > 1 ? 's' : ''} para olhar` : 'Tudo calmo por aqui'}</h2>
+            <p>
+              {cashMessage} Resultado de hoje: <strong>{money(profit)}</strong>.
+            </p>
+          </div>
+          <div className="home-status-actions">
+            <button className="primary-action" type="button" onClick={onGoLaunch}>
+              <Mic size={18} />
+              Falar lancamento
+            </button>
+            <button className="secondary-action" type="button" onClick={copySummary}>
+              <FileText size={18} />
+              Copiar resumo
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="quick-action-grid" aria-label="Acoes rapidas">
+        {quickActions.map((action) => {
+          const Icon = action.icon
+          return (
+            <button key={action.label} type="button" onClick={action.action}>
+              <Icon size={21} />
+              <strong>{action.label}</strong>
+              <span>{action.helper}</span>
+            </button>
+          )
+        })}
+      </section>
 
       {!hasStarted && (
         <section className="activation-panel">
@@ -1521,14 +1574,14 @@ function TodayView({ totals, transactions, accountBalances, lowStock, goals, bil
         </section>
       )}
 
-      <div className="metric-grid">
-        <Metric title="Entradas hoje" value={money(totals.todayIncome)} icon={ArrowUpRight} tone="green" />
-        <Metric title="Saídas hoje" value={money(totals.todayExpense)} icon={ArrowDownRight} tone="red" />
-        <Metric title="Caixa do negócio" value={money(businessBalance)} icon={Store} tone="blue" />
-        <Metric title="A receber" value={money(totals.receivable)} icon={Users} tone="amber" />
+      <div className="home-metrics">
+        <Metric title="Entrou hoje" value={money(totals.todayIncome)} icon={ArrowUpRight} tone="green" />
+        <Metric title="Saiu hoje" value={money(totals.todayExpense)} icon={ArrowDownRight} tone="red" />
+        <Metric title="Resultado" value={money(profit)} icon={TrendingUp} tone={profit >= 0 ? 'green' : 'red'} />
+        <Metric title="A receber" value={money(openReceivables)} icon={Users} tone="amber" />
       </div>
 
-      <div className="content-grid">
+      <div className="home-content-grid">
         <section className="panel">
           <div className="panel-heading">
             <h3>Precisa de atenção</h3>
@@ -1570,47 +1623,6 @@ function TodayView({ totals, transactions, accountBalances, lowStock, goals, bil
         </section>
       </div>
 
-      <div className="support-grid">
-        <section className="support-card">
-          <div className="support-icon">
-            <ClipboardList size={20} />
-          </div>
-          <div>
-            <p className="eyebrow">Rotina recomendada</p>
-            <h3>Use em 3 momentos do dia</h3>
-            <ol>
-              <li>Registre entradas e saidas assim que acontecerem.</li>
-              <li>Revise contas a pagar e receber no fim do dia.</li>
-              <li>Abra Relatorios para ver o que merece atencao.</li>
-            </ol>
-          </div>
-        </section>
-
-        <section className="support-card">
-          <div className="support-icon">
-            <Send size={20} />
-          </div>
-          <div>
-            <p className="eyebrow">Suporte beta</p>
-            <h3>Feedback direto</h3>
-            <p>Envie erros, ideias ou dificuldade de uso para evoluirmos o produto com casos reais.</p>
-            <a className="secondary-action" href="mailto:suporte.altum@gmail.com?subject=Feedback%20Norte%20Beta">
-              Enviar feedback
-            </a>
-          </div>
-        </section>
-
-        <section className="support-card">
-          <div className="support-icon">
-            <Landmark size={20} />
-          </div>
-          <div>
-            <p className="eyebrow">Privacidade</p>
-            <h3>Seus dados ficam na sua conta</h3>
-            <p>O workspace e salvo por usuario no Firebase. Voce pode exportar backup local quando quiser.</p>
-          </div>
-        </section>
-      </div>
     </section>
   )
 }
@@ -1702,10 +1714,28 @@ function LaunchView({
     <section className="screen">
       <div className="section-title">
         <div>
-          <p className="eyebrow">Lançamento inteligente</p>
-          <h2>Digite ou fale naturalmente</h2>
+          <p className="eyebrow">Registrar</p>
+          <h2>Coloque o dia financeiro em ordem</h2>
         </div>
       </div>
+
+      <section className="register-hero">
+        <button type="button" onClick={startVoice} className={isListening ? 'recording' : ''}>
+          <Mic size={22} />
+          <strong>{isListening ? 'Ouvindo agora' : 'Falar'}</strong>
+          <span>Ideal para registrar na correria.</span>
+        </button>
+        <button type="button" onClick={() => document.getElementById('quick-entry-text')?.focus()}>
+          <Send size={22} />
+          <strong>Digitar</strong>
+          <span>Escreva do seu jeito e revise antes de salvar.</span>
+        </button>
+        <button type="button" onClick={() => document.getElementById('manual-entry-title')?.focus()}>
+          <ReceiptText size={22} />
+          <strong>Manual</strong>
+          <span>Use quando quiser controlar cada campo.</span>
+        </button>
+      </section>
 
       <section className="quick-capture">
         <div className="capture-head">
@@ -1723,6 +1753,7 @@ function LaunchView({
           ))}
         </div>
         <textarea
+          id="quick-entry-text"
           value={quickText}
           onChange={(event) => setQuickText(event.target.value)}
           placeholder="Ex: vendi 3 atendimentos por 240, comprei material por 35 e retirei 80 para uso pessoal"
@@ -1837,7 +1868,7 @@ function LaunchView({
           <div className="form-grid">
             <label>
               Descrição
-              <input value={manual.title} onChange={(event) => setManual({ ...manual, title: event.target.value })} placeholder="Ex: Cliente Ana" />
+              <input id="manual-entry-title" value={manual.title} onChange={(event) => setManual({ ...manual, title: event.target.value })} placeholder="Ex: Cliente Ana" />
             </label>
             <label>
               Valor
