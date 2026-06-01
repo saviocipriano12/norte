@@ -1375,6 +1375,12 @@ function TodayView({ totals, transactions, accountBalances, lowStock, goals, bil
   const overdueBills = openBills.filter((bill) => bill.due < todayDate)
   const dueTodayBills = openBills.filter((bill) => bill.due === todayDate)
   const pendingClients = clients.filter((client) => Number(client.receivable || 0) > 0)
+  const hasStarted = transactions.length > 0 || goals.length > 0 || bills.length > 0 || clients.length > 0
+  const activationSteps = [
+    { label: 'Criar primeiro lancamento', done: transactions.length > 0, target: 'launch' },
+    { label: 'Definir uma meta', done: goals.length > 0, target: 'goals' },
+    { label: 'Cadastrar conta ou recebimento', done: bills.length > 0 || clients.length > 0, target: 'bills' },
+  ]
   const priorities = [
     ...overdueBills.slice(0, 2).map((bill) => ({
       tone: 'danger',
@@ -1431,6 +1437,24 @@ function TodayView({ totals, transactions, accountBalances, lowStock, goals, bil
           Copiar resumo
         </button>
       </div>
+
+      {!hasStarted && (
+        <section className="activation-panel">
+          <div>
+            <p className="eyebrow">Primeiros 2 minutos</p>
+            <h3>Comece pelo que aconteceu hoje.</h3>
+            <p>O Norte fica inteligente quando voce registra entradas, saidas, contas e metas. Nao precisa configurar tudo antes.</p>
+          </div>
+          <div className="activation-steps">
+            {activationSteps.map((step) => (
+              <button key={step.label} className={step.done ? 'done' : ''} type="button" onClick={() => onNavigate(step.target)}>
+                <Check size={17} />
+                {step.label}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="metric-grid">
         <Metric title="Entradas hoje" value={money(totals.todayIncome)} icon={ArrowUpRight} tone="green" />
@@ -1556,6 +1580,12 @@ function LaunchView({
   const reviewCount = drafts.length - readyCount
   const parsedIncome = drafts.filter((draft) => draft.type === 'income').reduce((acc, draft) => acc + Number(draft.amount || 0), 0)
   const parsedExpense = drafts.filter((draft) => draft.type === 'expense').reduce((acc, draft) => acc + Number(draft.amount || 0), 0)
+  const quickExamples = [
+    'Recebi 180 de cliente hoje',
+    'Gastei 72 com material para o negocio',
+    'Paguei 120 de mercado pessoal',
+    'Vendi 3 unidades por 90',
+  ]
 
   const updateDraft = (id, patch) => {
     setDrafts((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)))
@@ -1571,6 +1601,20 @@ function LaunchView({
       </div>
 
       <section className="quick-capture">
+        <div className="capture-head">
+          <div>
+            <strong>Conte do seu jeito</strong>
+            <span>Uma frase pode virar varios lancamentos revisaveis.</span>
+          </div>
+          <span className="save-chip">Salva apos confirmar</span>
+        </div>
+        <div className="example-chips" aria-label="Exemplos de lancamento">
+          {quickExamples.map((example) => (
+            <button key={example} type="button" onClick={() => setQuickText(example)}>
+              {example}
+            </button>
+          ))}
+        </div>
         <textarea
           value={quickText}
           onChange={(event) => setQuickText(event.target.value)}

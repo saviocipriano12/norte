@@ -435,6 +435,57 @@ button:disabled {
   color: var(--muted);
 }
 
+.activation-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(280px, 1.15fr);
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid #c9ddd5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.activation-panel h3,
+.activation-panel p {
+  margin: 0;
+}
+
+.activation-panel h3 {
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.activation-panel p:not(.eyebrow) {
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.activation-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.activation-steps button {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--ink);
+  background: #f8fbf9;
+  font-weight: 800;
+  text-align: left;
+}
+
+.activation-steps button.done {
+  color: #116149;
+  background: #e4f3eb;
+}
+
 .quick-capture {
   display: grid;
   gap: 12px;
@@ -442,6 +493,51 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.capture-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.capture-head strong,
+.capture-head span {
+  display: block;
+}
+
+.capture-head span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.save-chip {
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: #116149 !important;
+  background: #e4f3eb;
+  font-size: 12px !important;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.example-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.example-chips button {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  color: #33574d;
+  background: #f8fbf9;
+  font-size: 13px;
 }
 
 textarea,
@@ -1196,6 +1292,10 @@ label {
   font-weight: 800;
 }
 
+.auth-panel > .text-action:last-child {
+  display: none;
+}
+
 .welcome-band {
   display: grid;
   align-content: space-between;
@@ -1306,12 +1406,18 @@ legend {
   .metric-grid,
   .content-grid,
   .goal-grid,
+  .activation-panel,
   .onboarding,
   .auth-screen {
     grid-template-columns: 1fr;
   }
 
   .hero-panel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .capture-head {
     align-items: flex-start;
     flex-direction: column;
   }
