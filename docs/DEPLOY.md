@@ -42,9 +42,9 @@ Antes do deploy, habilite no console:
 
 ## Vercel
 
-O app tem `vercel.json` para build Vite e rewrite SPA.
+O app tem `vercel.json` para build Vite e rewrite SPA. O build publico ja inclui a configuracao web do Firebase do projeto Norte, entao o Vercel abre o fluxo normal de cadastro/entrada sem tela tecnica de bloqueio.
 
-Configure estas variaveis no Vercel em Production, Preview e Development:
+Use estas variaveis no Vercel apenas se quiser sobrescrever a configuracao para outro projeto Firebase:
 
 ```text
 VITE_FIREBASE_API_KEY

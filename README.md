@@ -43,7 +43,7 @@ No Console do Firebase, habilite:
 
 O arquivo `vercel.json` ja define build Vite, saida `dist` e rewrite para SPA.
 
-Cadastre no Vercel as mesmas variaveis `VITE_FIREBASE_*` listadas acima. Sem elas, o app mostra uma tela de bloqueio de producao em vez de cair em modo local.
+O build publico ja inclui a configuracao web do Firebase do projeto Norte, entao o fluxo normal em producao e abrir cadastro/entrada, autenticar no Firebase e carregar o workspace do usuario. As variaveis `VITE_FIREBASE_*` continuam opcionais para sobrescrever a configuracao em outro projeto Firebase.
 
 ## Dados
 

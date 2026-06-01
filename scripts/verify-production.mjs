@@ -23,8 +23,7 @@ const requiredEnv = [
 const missing = requiredEnv.filter((key) => !process.env[key])
 
 if (missing.length) {
-  console.error(`Missing production env vars: ${missing.join(', ')}`)
-  process.exitCode = 1
+  console.warn(`Using bundled Firebase web config because env vars are missing: ${missing.join(', ')}`)
 }
 
 run('npm', ['run', 'functions:sync-domain'])

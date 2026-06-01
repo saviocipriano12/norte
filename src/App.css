@@ -1157,6 +1157,14 @@ label {
   padding: 32px 0;
 }
 
+.auth-tabs {
+  width: 100%;
+}
+
+.auth-tabs button {
+  flex: 1;
+}
+
 .auth-panel h2 {
   margin: 0;
   color: var(--ink);

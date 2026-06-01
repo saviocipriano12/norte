@@ -10,14 +10,24 @@ import {
 import { collection, doc, getDoc, getDocs, getFirestore, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore'
 import { getFunctions, httpsCallable } from 'firebase/functions'
 
+const publicFirebaseConfig = {
+  apiKey: 'AIzaSyDzxkJXPujaASViFiKPZB5Cql4yx-Gy00Y',
+  authDomain: 'norte-b506b.firebaseapp.com',
+  projectId: 'norte-b506b',
+  storageBucket: 'norte-b506b.firebasestorage.app',
+  messagingSenderId: '156364280852',
+  appId: '1:156364280852:web:79b7cda1b21f6d946f0301',
+  measurementId: 'G-Y5ME2XDMZ4',
+}
+
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || publicFirebaseConfig.apiKey,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || publicFirebaseConfig.authDomain,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || publicFirebaseConfig.projectId,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || publicFirebaseConfig.storageBucket,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || publicFirebaseConfig.messagingSenderId,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || publicFirebaseConfig.appId,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || publicFirebaseConfig.measurementId,
 }
 
 export const firebaseEnabled = Boolean(

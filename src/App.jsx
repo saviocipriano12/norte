@@ -352,8 +352,6 @@ function App() {
     notes: '',
   })
 
-  const productionNeedsFirebase = import.meta.env.PROD && !firebaseEnabled
-
   const transactions = useMemo(
     () => [...safeData.transactions].sort((a, b) => `${b.date}`.localeCompare(`${a.date}`)),
     [safeData.transactions],
@@ -908,10 +906,6 @@ function App() {
     }
   }
 
-  if (productionNeedsFirebase) {
-    return <FirebaseRequiredScreen />
-  }
-
   if (firebaseEnabled && authReady && !firebaseUser) {
     return <AuthScreen />
   }
@@ -1157,6 +1151,7 @@ function Brand() {
   )
 }
 
+// eslint-disable-next-line no-unused-vars
 function FirebaseRequiredScreen() {
   return (
     <main className="auth-screen">
@@ -1182,7 +1177,7 @@ function FirebaseRequiredScreen() {
 }
 
 function AuthScreen() {
-  const [mode, setMode] = useState('login')
+  const [mode, setMode] = useState('register')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -1195,6 +1190,9 @@ function AuthScreen() {
     setNotice('')
     setLoading(true)
     try {
+      if (!firebaseEnabled) {
+        throw new Error('auth/unavailable')
+      }
       if (mode === 'login') {
         await loginWithEmail(email, password)
       } else {
@@ -1238,7 +1236,15 @@ function AuthScreen() {
       <form className="auth-panel" onSubmit={submit}>
         <div>
           <p className="eyebrow">{mode === 'login' ? 'Entrar' : 'Criar conta'}</p>
-          <h2>{mode === 'login' ? 'Acesse sua conta' : 'Comece agora'}</h2>
+          <h2>{mode === 'login' ? 'Acesse sua conta' : 'Comece pelo cadastro'}</h2>
+        </div>
+        <div className="segmented auth-tabs" aria-label="Cadastro ou entrada">
+          <button className={mode === 'register' ? 'selected' : ''} type="button" onClick={() => setMode('register')}>
+            Cadastro
+          </button>
+          <button className={mode === 'login' ? 'selected' : ''} type="button" onClick={() => setMode('login')}>
+            Entrar
+          </button>
         </div>
         <label>
           Email
@@ -1252,7 +1258,7 @@ function AuthScreen() {
         {notice && <p className="form-success">{notice}</p>}
         <button className="primary-action" type="submit" disabled={loading}>
           <Check size={18} />
-          {loading ? 'Aguarde...' : mode === 'login' ? 'Entrar' : 'Criar conta'}
+          {loading ? 'Aguarde...' : mode === 'login' ? 'Entrar' : 'Criar conta e continuar'}
         </button>
         {mode === 'login' && (
           <button className="text-action" type="button" onClick={resetPassword} disabled={loading}>
