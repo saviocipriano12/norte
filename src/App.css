@@ -909,6 +909,48 @@ label {
   gap: 12px;
 }
 
+.plan-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid #c9ddd5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.plan-panel h3,
+.plan-panel p {
+  margin: 0;
+}
+
+.plan-panel h3 {
+  color: var(--ink);
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.plan-panel span {
+  color: var(--muted);
+}
+
+.plan-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.plan-badges span {
+  padding: 7px 10px;
+  border-radius: 999px;
+  color: #116149;
+  background: #e4f3eb;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .report-copy p,
 .settings-summary p {
   margin: 0;
@@ -1327,6 +1369,26 @@ label {
   padding: 32px;
 }
 
+.setup-heading {
+  display: grid;
+  gap: 6px;
+}
+
+.setup-heading h2,
+.setup-heading p {
+  margin: 0;
+}
+
+.setup-heading h2 {
+  color: var(--ink);
+  font-size: clamp(26px, 4vw, 38px);
+  line-height: 1.05;
+}
+
+.setup-heading span {
+  color: var(--muted);
+}
+
 fieldset {
   min-width: 0;
   margin: 0;
@@ -1385,6 +1447,43 @@ legend {
   color: #116149;
 }
 
+.profile-preview {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #c9ddd5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.profile-preview h3,
+.profile-preview p {
+  margin: 0;
+}
+
+.profile-preview h3 {
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.preview-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preview-list span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  color: #116149;
+  background: #e4f3eb;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 @media (max-width: 980px) {
   .app-shell {
     display: block;
@@ -1415,6 +1514,15 @@ legend {
   .hero-panel {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .plan-panel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .plan-badges {
+    justify-content: flex-start;
   }
 
   .capture-head {

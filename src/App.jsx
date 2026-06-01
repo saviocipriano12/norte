@@ -1275,6 +1275,7 @@ function AuthScreen() {
 
 function Onboarding({ onComplete }) {
   const [selected, setSelected] = useState('services')
+  const selectedProfile = profileOptions.find((profile) => profile.id === selected) || profileOptions[0]
 
   return (
     <main className="onboarding">
@@ -1290,6 +1291,12 @@ function Onboarding({ onComplete }) {
       </section>
 
       <form className="setup-panel" onSubmit={onComplete}>
+        <div className="setup-heading">
+          <p className="eyebrow">Passo 1 de 3</p>
+          <h2>Vamos preparar sua rotina financeira</h2>
+          <span>Voce pode alterar tudo depois em Ajustes.</span>
+        </div>
+
         <div className="form-grid two">
           <label>
             Seu nome
@@ -1356,6 +1363,21 @@ function Onboarding({ onComplete }) {
             ))}
           </div>
         </fieldset>
+
+        <section className="profile-preview">
+          <div>
+            <p className="eyebrow">O Norte vai priorizar</p>
+            <h3>{selectedProfile.label}</h3>
+          </div>
+          <div className="preview-list">
+            {selectedProfile.focus.map((item) => (
+              <span key={item}>
+                <Check size={15} />
+                {item}
+              </span>
+            ))}
+          </div>
+        </section>
 
         <button className="primary-action" type="submit">
           <Check size={18} />
@@ -2934,6 +2956,8 @@ function ReportsView({ data, totals, accountBalances, lowStock }) {
 }
 
 function SettingsView({ data, exportBackup, importBackup, resetAppData }) {
+  const currentProfile = profileOptions.find((item) => item.id === data.user.profile)
+
   return (
     <section className="screen">
       <div className="section-title">
@@ -2942,6 +2966,19 @@ function SettingsView({ data, exportBackup, importBackup, resetAppData }) {
           <h2>Ajustes do app</h2>
         </div>
       </div>
+
+      <section className="plan-panel">
+        <div>
+          <p className="eyebrow">Conta e plano</p>
+          <h3>Norte Beta</h3>
+          <span>Uso liberado para testes reais enquanto a cobranca nao esta ativa.</span>
+        </div>
+        <div className="plan-badges">
+          <span>Workspace individual</span>
+          <span>Firebase ativo</span>
+          <span>Dados isolados</span>
+        </div>
+      </section>
 
       <div className="content-grid">
         <section className="panel">
@@ -2973,7 +3010,8 @@ function SettingsView({ data, exportBackup, importBackup, resetAppData }) {
           <div className="settings-summary">
             <p><strong>Usuario:</strong> {data.user.name}</p>
             <p><strong>Negocio:</strong> {data.user.businessName}</p>
-            <p><strong>Perfil:</strong> {profileOptions.find((item) => item.id === data.user.profile)?.label}</p>
+            <p><strong>Perfil:</strong> {currentProfile?.label}</p>
+            <p><strong>Plano:</strong> Norte Beta</p>
             <p><strong>Movimentos:</strong> {data.transactions.length}</p>
             <p><strong>Itens de operacao:</strong> {data.catalog.length}</p>
           </div>
