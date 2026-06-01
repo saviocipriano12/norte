@@ -85,19 +85,29 @@ const profileOptions = [
 ]
 
 const navItems = [
-  { id: 'today', label: 'Hoje', icon: Home },
-  { id: 'launch', label: 'Lançar', icon: Plus },
-  { id: 'assistant', label: 'Decidir', icon: Sparkles },
-  { id: 'sales', label: 'Vendas', icon: ShoppingCart },
-  { id: 'purchases', label: 'Compras', icon: Package },
-  { id: 'business', label: 'Negócio', icon: Briefcase },
-  { id: 'clients', label: 'Clientes', icon: Users },
-  { id: 'bills', label: 'Contas', icon: Bell },
-  { id: 'personal', label: 'Pessoal', icon: Wallet },
-  { id: 'reports', label: 'Relatórios', icon: PieChart },
-  { id: 'goals', label: 'Metas', icon: Target },
-  { id: 'settings', label: 'Ajustes', icon: Settings },
+  { id: 'home', label: 'Inicio', icon: Home },
+  { id: 'register', label: 'Registrar', icon: Plus },
+  { id: 'movements', label: 'Movimentos', icon: ReceiptText },
+  { id: 'pay', label: 'Pagar/Receber', icon: Bell },
+  { id: 'account', label: 'Conta', icon: Settings },
 ]
+
+const primaryViewMap = {
+  today: 'home',
+  assistant: 'home',
+  reports: 'home',
+  goals: 'home',
+  launch: 'register',
+  sales: 'movements',
+  purchases: 'movements',
+  business: 'movements',
+  personal: 'movements',
+  clients: 'pay',
+  bills: 'pay',
+  settings: 'account',
+}
+
+const primaryViewFor = (view) => primaryViewMap[view] || view
 
 const categories = {
   income: ['Venda', 'Serviço', 'Recebimento', 'Salário', 'Outros ganhos'],
@@ -307,7 +317,9 @@ function useAppData() {
 
 function App() {
   const [data, setData, dataStatus, firebaseUser, authReady] = useAppData()
-  const [active, setActive] = useState('today')
+  const [active, setActive] = useState('home')
+  const activePrimary = primaryViewFor(active)
+  const navigateTo = (view) => setActive(view)
   const [quickText, setQuickText] = useState('')
   const [drafts, setDrafts] = useState([])
   const [captureError, setCaptureError] = useState('')
@@ -933,7 +945,7 @@ function App() {
             return (
               <button
                 key={item.id}
-                className={`nav-button ${active === item.id ? 'active' : ''}`}
+                className={`nav-button ${activePrimary === item.id ? 'active' : ''}`}
                 type="button"
                 onClick={() => setActive(item.id)}
                 title={item.label}
@@ -977,7 +989,7 @@ function App() {
           </div>
         </header>
 
-        {active === 'today' && (
+        {active === 'home' && (
           <TodayView
             totals={totals}
             transactions={transactions}
@@ -986,12 +998,12 @@ function App() {
             goals={data.goals}
             bills={data.bills}
             clients={data.clients}
-            onGoLaunch={() => setActive('launch')}
-            onNavigate={setActive}
+            onGoLaunch={() => setActive('register')}
+            onNavigate={navigateTo}
           />
         )}
 
-        {active === 'launch' && (
+        {active === 'register' && (
           <LaunchView
             quickText={quickText}
             setQuickText={setQuickText}
@@ -1011,6 +1023,32 @@ function App() {
             updateTransaction={updateTransaction}
             deleteTransaction={deleteTransaction}
           />
+        )}
+
+        {active === 'movements' && (
+          <MovementsView
+            data={data}
+            totals={totals}
+            accountBalances={accountBalances}
+            transactions={transactions}
+            accounts={data.accounts}
+            onUpdate={updateTransaction}
+            onDelete={deleteTransaction}
+            onNavigate={setActive}
+          />
+        )}
+
+        {active === 'pay' && (
+          <PayReceiveView
+            totals={totals}
+            bills={data.bills}
+            clients={data.clients}
+            onNavigate={setActive}
+          />
+        )}
+
+        {active === 'account' && (
+          <SettingsView data={data} exportBackup={exportBackup} importBackup={importBackup} resetAppData={resetAppData} />
         )}
 
         {active === 'assistant' && (
@@ -1126,7 +1164,7 @@ function App() {
         {navItems.map((item) => {
           const Icon = item.icon
           return (
-            <button key={item.id} className={active === item.id ? 'active' : ''} type="button" onClick={() => setActive(item.id)}>
+            <button key={item.id} className={activePrimary === item.id ? 'active' : ''} type="button" onClick={() => setActive(item.id)}>
               <Icon size={20} />
               <span>{item.label}</span>
             </button>
@@ -1855,6 +1893,190 @@ function LaunchView({
         </div>
         <TransactionList items={transactions.slice(0, 6)} accounts={accounts} onUpdate={updateTransaction} onDelete={deleteTransaction} />
       </section>
+    </section>
+  )
+}
+
+function MovementsView({ data, totals, accountBalances, transactions, accounts, onUpdate, onDelete, onNavigate }) {
+  const [filters, setFilters] = useState({ scope: 'all', type: 'all', text: '' })
+  const businessBalance = getBusinessBalance(accountBalances)
+  const personalBalance = getPersonalBalance(accountBalances)
+  const filteredTransactions = transactions.filter((item) => {
+    const matchesScope = filters.scope === 'all' || item.scope === filters.scope
+    const matchesType = filters.type === 'all' || item.type === filters.type
+    const text = normalizeText(`${item.title} ${item.category} ${item.note || ''}`)
+    const matchesText = !filters.text || text.includes(normalizeText(filters.text))
+    return matchesScope && matchesType && matchesText
+  })
+
+  return (
+    <section className="screen">
+      <div className="section-title">
+        <div>
+          <p className="eyebrow">Historico e operacao</p>
+          <h2>Movimentos</h2>
+        </div>
+      </div>
+
+      <div className="metric-grid">
+        <Metric title="Entradas negocio" value={money(totals.businessIncome)} icon={ArrowUpRight} tone="green" />
+        <Metric title="Saidas negocio" value={money(totals.businessExpense)} icon={ArrowDownRight} tone="red" />
+        <Metric title="Saldo negocio" value={money(businessBalance)} icon={Store} tone="blue" />
+        <Metric title="Saldo pessoal" value={money(personalBalance)} icon={Wallet} tone="amber" />
+      </div>
+
+      <div className="section-switcher">
+        <button type="button" onClick={() => onNavigate('sales')}>
+          <ShoppingCart size={18} />
+          Vendas
+        </button>
+        <button type="button" onClick={() => onNavigate('purchases')}>
+          <Package size={18} />
+          Compras
+        </button>
+        <button type="button" onClick={() => onNavigate('business')}>
+          <Briefcase size={18} />
+          Operacao
+        </button>
+        <button type="button" onClick={() => onNavigate('reports')}>
+          <PieChart size={18} />
+          Insights
+        </button>
+      </div>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <h3>Todos os movimentos</h3>
+          <ReceiptText size={18} />
+        </div>
+        <div className="filter-bar">
+          <input value={filters.text} onChange={(event) => setFilters({ ...filters, text: event.target.value })} placeholder="Buscar por descricao ou categoria" />
+          <div className="chip-row">
+            {[
+              ['all', 'Todos'],
+              ['business', 'Negocio'],
+              ['personal', 'Pessoal'],
+            ].map(([scope, label]) => (
+              <button key={scope} className={filters.scope === scope ? 'selected' : ''} type="button" onClick={() => setFilters({ ...filters, scope })}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="chip-row">
+            {[
+              ['all', 'Tudo'],
+              ['income', 'Entradas'],
+              ['expense', 'Saidas'],
+              ['transfer', 'Transferencias'],
+            ].map(([type, label]) => (
+              <button key={type} className={filters.type === type ? 'selected' : ''} type="button" onClick={() => setFilters({ ...filters, type })}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <TransactionList items={filteredTransactions} accounts={accounts} onUpdate={onUpdate} onDelete={onDelete} />
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <h3>Operacao resumida</h3>
+          <Sparkles size={18} />
+        </div>
+        <div className="operation-summary">
+          <span>{data.sales?.length || 0} vendas</span>
+          <span>{data.purchases?.length || 0} compras</span>
+          <span>{data.catalog?.length || 0} itens</span>
+          <span>{data.suppliers?.length || 0} fornecedores</span>
+        </div>
+      </section>
+    </section>
+  )
+}
+
+function PayReceiveView({ totals, bills, clients, onNavigate }) {
+  const openBills = bills.filter((bill) => bill.status !== 'paid')
+  const todayDate = today()
+  const overdueBills = openBills.filter((bill) => bill.due < todayDate)
+  const pendingClients = clients.filter((client) => Number(client.receivable || 0) > 0)
+  const nextBills = [...openBills].sort((a, b) => `${a.due}`.localeCompare(`${b.due}`)).slice(0, 5)
+
+  return (
+    <section className="screen">
+      <div className="section-title">
+        <div>
+          <p className="eyebrow">Contas e clientes</p>
+          <h2>Pagar e receber</h2>
+        </div>
+      </div>
+
+      <div className="metric-grid">
+        <Metric title="A pagar" value={money(totals.billsPayable)} icon={ArrowDownRight} tone="red" />
+        <Metric title="A receber" value={money(totals.billsReceivable + totals.receivable)} icon={ArrowUpRight} tone="green" />
+        <Metric title="Vencidas" value={overdueBills.length} icon={AlertCircle} tone="red" />
+        <Metric title="Clientes devendo" value={pendingClients.length} icon={Users} tone="amber" />
+      </div>
+
+      <div className="section-switcher">
+        <button type="button" onClick={() => onNavigate('bills')}>
+          <Bell size={18} />
+          Abrir contas
+        </button>
+        <button type="button" onClick={() => onNavigate('clients')}>
+          <Users size={18} />
+          Abrir clientes
+        </button>
+        <button type="button" onClick={() => onNavigate('register')}>
+          <Plus size={18} />
+          Registrar agora
+        </button>
+      </div>
+
+      <div className="content-grid">
+        <section className="panel">
+          <div className="panel-heading">
+            <h3>Proximos vencimentos</h3>
+            <Calendar size={18} />
+          </div>
+          <div className="cashflow-list">
+            {nextBills.length ? (
+              nextBills.map((bill) => (
+                <article key={bill.id} className="cashflow-item">
+                  <div>
+                    <strong>{bill.title}</strong>
+                    <span>{bill.type === 'receivable' ? 'Receber' : 'Pagar'} em {new Date(`${bill.due}T12:00:00`).toLocaleDateString('pt-BR')}</span>
+                  </div>
+                  <strong className={bill.type === 'receivable' ? 'positive' : 'negative'}>{money(bill.amount)}</strong>
+                </article>
+              ))
+            ) : (
+              <p className="empty-state">Nenhuma conta aberta. Cadastre contas para prever seu caixa.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-heading">
+            <h3>Clientes com valor em aberto</h3>
+            <Users size={18} />
+          </div>
+          <div className="cashflow-list">
+            {pendingClients.length ? (
+              pendingClients.slice(0, 5).map((client) => (
+                <article key={client.id} className="cashflow-item">
+                  <div>
+                    <strong>{client.name}</strong>
+                    <span>{client.due ? `Vence em ${new Date(`${client.due}T12:00:00`).toLocaleDateString('pt-BR')}` : 'Sem vencimento'}</span>
+                  </div>
+                  <strong className="positive">{money(client.receivable)}</strong>
+                </article>
+              ))
+            ) : (
+              <p className="empty-state">Nenhum cliente com valor em aberto agora.</p>
+            )}
+          </div>
+        </section>
+      </div>
     </section>
   )
 }

@@ -1325,6 +1325,46 @@ label {
   margin-bottom: 14px;
 }
 
+.section-switcher,
+.chip-row,
+.operation-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.section-switcher button,
+.chip-row button,
+.operation-summary span {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: #33574d;
+  background: #ffffff;
+  font-weight: 800;
+}
+
+.section-switcher button,
+.chip-row button {
+  cursor: pointer;
+}
+
+.chip-row button.selected {
+  color: #116149;
+  border-color: #bfdfd0;
+  background: #e4f3eb;
+}
+
+.operation-summary span {
+  color: #116149;
+  background: #e4f3eb;
+}
+
 .positive {
   color: #116149;
 }
@@ -1660,7 +1700,6 @@ legend {
     right: 10px;
     bottom: 10px;
     display: flex;
-    overflow-x: auto;
     gap: 3px;
     padding: 6px;
     border: 1px solid var(--line);
@@ -1671,13 +1710,20 @@ legend {
   }
 
   .mobile-nav button {
-    min-width: 72px;
+    min-width: 0;
     min-height: 54px;
+    flex: 1 1 0;
     display: grid;
     place-items: center;
     gap: 2px;
     border-radius: 8px;
     font-size: 11px;
+  }
+
+  .mobile-nav button span {
+    max-width: 100%;
+    line-height: 1.05;
+    overflow-wrap: anywhere;
   }
 
   .mobile-nav button.active {
