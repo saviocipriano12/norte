@@ -1932,6 +1932,12 @@ function MovementsView({ data, totals, accountBalances, transactions, accounts, 
   const [filters, setFilters] = useState({ scope: 'all', type: 'all', text: '' })
   const businessBalance = getBusinessBalance(accountBalances)
   const personalBalance = getPersonalBalance(accountBalances)
+  const businessResult = totals.businessIncome - totals.businessExpense
+  const personalResult = totals.personalIncome - totals.personalExpense
+  const totalBalance = businessBalance + personalBalance
+  const incomeCount = transactions.filter((item) => item.type === 'income').length
+  const expenseCount = transactions.filter((item) => item.type === 'expense').length
+  const lastMovement = transactions[0]
   const filteredTransactions = transactions.filter((item) => {
     const matchesScope = filters.scope === 'all' || item.scope === filters.scope
     const matchesType = filters.type === 'all' || item.type === filters.type
@@ -1944,40 +1950,61 @@ function MovementsView({ data, totals, accountBalances, transactions, accounts, 
     <section className="screen">
       <div className="section-title">
         <div>
-          <p className="eyebrow">Historico e operacao</p>
+          <p className="eyebrow">Movimentos</p>
           <h2>Movimentos</h2>
         </div>
       </div>
 
-      <div className="metric-grid">
+      <section className="finance-hero">
+        <div className="finance-hero-main">
+          <p className="eyebrow">Fluxo do dinheiro</p>
+          <span>Saldo total</span>
+          <strong>{money(totalBalance)}</strong>
+          <p>
+            Negocio em {money(businessResult)} e pessoal em {money(personalResult)} no periodo registrado.
+          </p>
+        </div>
+        <div className="finance-hero-side">
+          <span>{transactions.length} movimentos</span>
+          <span>{incomeCount} entradas</span>
+          <span>{expenseCount} saidas</span>
+          <span>{lastMovement ? `Ultimo: ${lastMovement.title}` : 'Nenhum movimento ainda'}</span>
+        </div>
+      </section>
+
+      <div className="money-pulse-grid">
         <Metric title="Entradas negocio" value={money(totals.businessIncome)} icon={ArrowUpRight} tone="green" />
         <Metric title="Saidas negocio" value={money(totals.businessExpense)} icon={ArrowDownRight} tone="red" />
         <Metric title="Saldo negocio" value={money(businessBalance)} icon={Store} tone="blue" />
         <Metric title="Saldo pessoal" value={money(personalBalance)} icon={Wallet} tone="amber" />
       </div>
 
-      <div className="section-switcher">
+      <div className="action-card-grid">
         <button type="button" onClick={() => onNavigate('sales')}>
-          <ShoppingCart size={18} />
-          Vendas
+          <ShoppingCart size={20} />
+          <strong>Vendas</strong>
+          <span>Registrar receita e baixa de estoque.</span>
         </button>
         <button type="button" onClick={() => onNavigate('purchases')}>
-          <Package size={18} />
-          Compras
+          <Package size={20} />
+          <strong>Compras</strong>
+          <span>Entrada de material e contas a pagar.</span>
         </button>
         <button type="button" onClick={() => onNavigate('business')}>
-          <Briefcase size={18} />
-          Operacao
+          <Briefcase size={20} />
+          <strong>Operacao</strong>
+          <span>Produtos, fornecedores e estrutura.</span>
         </button>
         <button type="button" onClick={() => onNavigate('reports')}>
-          <PieChart size={18} />
-          Insights
+          <PieChart size={20} />
+          <strong>Insights</strong>
+          <span>Relatorios e leitura do caixa.</span>
         </button>
       </div>
 
       <section className="panel">
         <div className="panel-heading">
-          <h3>Todos os movimentos</h3>
+          <h3>Linha do tempo</h3>
           <ReceiptText size={18} />
         </div>
         <div className="filter-bar">
@@ -2029,41 +2056,115 @@ function PayReceiveView({ totals, bills, clients, onNavigate }) {
   const openBills = bills.filter((bill) => bill.status !== 'paid')
   const todayDate = today()
   const overdueBills = openBills.filter((bill) => bill.due < todayDate)
+  const dueTodayBills = openBills.filter((bill) => bill.due === todayDate)
   const pendingClients = clients.filter((client) => Number(client.receivable || 0) > 0)
+  const openReceivables = totals.billsReceivable + totals.receivable
+  const openPayables = totals.billsPayable
+  const forecastBalance = openReceivables - openPayables
+  const overdueTotal = overdueBills.reduce((acc, bill) => acc + Number(bill.amount || 0), 0)
   const nextBills = [...openBills].sort((a, b) => `${a.due}`.localeCompare(`${b.due}`)).slice(0, 5)
+  const priorityItems = [
+    ...overdueBills.slice(0, 3).map((bill) => ({
+      tone: 'danger',
+      title: `${bill.type === 'receivable' ? 'Receber vencido' : 'Pagar vencido'}: ${bill.title}`,
+      detail: `${money(bill.amount)} venceu em ${new Date(`${bill.due}T12:00:00`).toLocaleDateString('pt-BR')}`,
+      action: bill.type === 'receivable' ? 'Cobrar' : 'Pagar',
+      target: 'bills',
+    })),
+    ...dueTodayBills.slice(0, 3).map((bill) => ({
+      tone: 'warning',
+      title: `${bill.type === 'receivable' ? 'Receber hoje' : 'Pagar hoje'}: ${bill.title}`,
+      detail: `${money(bill.amount)} vence hoje`,
+      action: 'Abrir',
+      target: 'bills',
+    })),
+    ...pendingClients.slice(0, 3).map((client) => ({
+      tone: 'info',
+      title: `${client.name} tem valor em aberto`,
+      detail: `${money(client.receivable)} para receber`,
+      action: 'Clientes',
+      target: 'clients',
+    })),
+  ].slice(0, 5)
 
   return (
     <section className="screen">
       <div className="section-title">
         <div>
-          <p className="eyebrow">Contas e clientes</p>
+          <p className="eyebrow">Agenda financeira</p>
           <h2>Pagar e receber</h2>
         </div>
       </div>
 
-      <div className="metric-grid">
-        <Metric title="A pagar" value={money(totals.billsPayable)} icon={ArrowDownRight} tone="red" />
-        <Metric title="A receber" value={money(totals.billsReceivable + totals.receivable)} icon={ArrowUpRight} tone="green" />
-        <Metric title="Vencidas" value={overdueBills.length} icon={AlertCircle} tone="red" />
+      <section className="finance-hero pay-hero">
+        <div className="finance-hero-main">
+          <p className="eyebrow">Previsao aberta</p>
+          <span>Depois de pagar e receber</span>
+          <strong>{money(forecastBalance)}</strong>
+          <p>
+            {forecastBalance >= 0
+              ? 'Os recebimentos em aberto cobrem as contas cadastradas.'
+              : 'As contas em aberto passam dos recebimentos previstos. Priorize cobrancas.'}
+          </p>
+        </div>
+        <div className="finance-hero-side">
+          <span>{money(openReceivables)} a receber</span>
+          <span>{money(openPayables)} a pagar</span>
+          <span>{overdueBills.length} vencidas</span>
+          <span>{money(overdueTotal)} em atraso</span>
+        </div>
+      </section>
+
+      <div className="money-pulse-grid">
+        <Metric title="A pagar" value={money(openPayables)} icon={ArrowDownRight} tone="red" />
+        <Metric title="A receber" value={money(openReceivables)} icon={ArrowUpRight} tone="green" />
+        <Metric title="Vence hoje" value={dueTodayBills.length} icon={Calendar} tone="amber" />
         <Metric title="Clientes devendo" value={pendingClients.length} icon={Users} tone="amber" />
       </div>
 
-      <div className="section-switcher">
+      <div className="action-card-grid compact">
         <button type="button" onClick={() => onNavigate('bills')}>
-          <Bell size={18} />
-          Abrir contas
+          <Bell size={20} />
+          <strong>Contas</strong>
+          <span>Pagar, receber e baixar vencimentos.</span>
         </button>
         <button type="button" onClick={() => onNavigate('clients')}>
-          <Users size={18} />
-          Abrir clientes
+          <Users size={20} />
+          <strong>Clientes</strong>
+          <span>Cobrar valores e acompanhar em aberto.</span>
         </button>
         <button type="button" onClick={() => onNavigate('register')}>
-          <Plus size={18} />
-          Registrar agora
+          <Plus size={20} />
+          <strong>Registrar</strong>
+          <span>Criar movimento novo por voz ou texto.</span>
         </button>
       </div>
 
-      <div className="content-grid">
+      <section className="panel">
+        <div className="panel-heading">
+          <h3>Fila de acao</h3>
+          <AlertCircle size={18} />
+        </div>
+        <div className="priority-list">
+          {priorityItems.length ? (
+            priorityItems.map((item) => (
+              <article className={`priority-item ${item.tone}`} key={`${item.title}-${item.detail}`}>
+                <div>
+                  <strong>{item.title}</strong>
+                  <span>{item.detail}</span>
+                </div>
+                <button className="mini-action" type="button" onClick={() => onNavigate(item.target)}>
+                  {item.action}
+                </button>
+              </article>
+            ))
+          ) : (
+            <p className="empty-state">Nada urgente. Cadastre vencimentos para o Norte montar sua agenda.</p>
+          )}
+        </div>
+      </section>
+
+      <div className="pay-content-grid">
         <section className="panel">
           <div className="panel-heading">
             <h3>Proximos vencimentos</h3>
