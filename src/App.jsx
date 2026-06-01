@@ -329,7 +329,8 @@ function App() {
   const [newClient, setNewClient] = useState({ name: '', phone: '', receivable: '', due: '', notes: '' })
   const [newBill, setNewBill] = useState({ title: '', type: 'payable', scope: 'business', amount: '', due: '', category: 'Conta fixa' })
   const [goalDrafts, setGoalDrafts] = useState({})
-  const firstCatalogItem = data?.catalog?.[0]
+  const safeData = data || starterData
+  const firstCatalogItem = safeData.catalog?.[0]
   const [newSale, setNewSale] = useState({
     clientName: '',
     itemId: firstCatalogItem?.id || '',
@@ -354,16 +355,16 @@ function App() {
   const productionNeedsFirebase = import.meta.env.PROD && !firebaseEnabled
 
   const transactions = useMemo(
-    () => [...data.transactions].sort((a, b) => `${b.date}`.localeCompare(`${a.date}`)),
-    [data.transactions],
+    () => [...safeData.transactions].sort((a, b) => `${b.date}`.localeCompare(`${a.date}`)),
+    [safeData.transactions],
   )
 
   const totals = useMemo(() => {
     const todayDate = today()
     const sum = (items, predicate) => items.filter(predicate).reduce((acc, item) => acc + Number(item.amount || 0), 0)
-    const todayItems = data.transactions.filter((item) => item.date === todayDate)
-    const businessItems = data.transactions.filter((item) => item.scope === 'business')
-    const personalItems = data.transactions.filter((item) => item.scope === 'personal')
+    const todayItems = safeData.transactions.filter((item) => item.date === todayDate)
+    const businessItems = safeData.transactions.filter((item) => item.scope === 'business')
+    const personalItems = safeData.transactions.filter((item) => item.scope === 'personal')
     return {
       todayIncome: sum(todayItems, (item) => item.type === 'income'),
       todayExpense: sum(todayItems, (item) => item.type === 'expense'),
@@ -371,16 +372,16 @@ function App() {
       businessExpense: sum(businessItems, (item) => item.type === 'expense'),
       personalIncome: sum(personalItems, (item) => item.type === 'income'),
       personalExpense: sum(personalItems, (item) => item.type === 'expense'),
-      receivable: data.clients.reduce((acc, client) => acc + Number(client.receivable || 0), 0),
-      billsReceivable: data.bills.filter((bill) => bill.status !== 'paid' && bill.type === 'receivable').reduce((acc, bill) => acc + Number(bill.amount || 0), 0),
-      billsPayable: data.bills.filter((bill) => bill.status !== 'paid' && bill.type === 'payable').reduce((acc, bill) => acc + Number(bill.amount || 0), 0),
+      receivable: safeData.clients.reduce((acc, client) => acc + Number(client.receivable || 0), 0),
+      billsReceivable: safeData.bills.filter((bill) => bill.status !== 'paid' && bill.type === 'receivable').reduce((acc, bill) => acc + Number(bill.amount || 0), 0),
+      billsPayable: safeData.bills.filter((bill) => bill.status !== 'paid' && bill.type === 'payable').reduce((acc, bill) => acc + Number(bill.amount || 0), 0),
     }
-  }, [data])
+  }, [safeData])
 
   const accountBalances = useMemo(
     () =>
-      data.accounts.map((account) => {
-        const movement = data.transactions
+      safeData.accounts.map((account) => {
+        const movement = safeData.transactions
           .filter((item) => item.accountId === account.id)
           .reduce((acc, item) => {
             if (item.type === 'income') return acc + Number(item.amount || 0)
@@ -389,12 +390,12 @@ function App() {
           }, 0)
         return { ...account, current: Number(account.balance || 0) + movement }
       }),
-    [data.accounts, data.transactions],
+    [safeData.accounts, safeData.transactions],
   )
 
-  const lowStock = data.catalog.filter((item) => item.stock !== null && Number(item.stock) <= Number(item.minStock || 0))
-  const profile = profileOptions.find((item) => item.id === data.user.profile) || profileOptions[4]
-  const activeWorkspaceId = data.meta?.workspaceId || (firebaseUser ? workspaceIdFor(firebaseUser.uid) : 'local-dev')
+  const lowStock = safeData.catalog.filter((item) => item.stock !== null && Number(item.stock) <= Number(item.minStock || 0))
+  const profile = profileOptions.find((item) => item.id === safeData.user.profile) || profileOptions[4]
+  const activeWorkspaceId = safeData.meta?.workspaceId || (firebaseUser ? workspaceIdFor(firebaseUser.uid) : 'local-dev')
 
   function completeOnboarding(event) {
     event.preventDefault()
