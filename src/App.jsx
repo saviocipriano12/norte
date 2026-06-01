@@ -1238,6 +1238,11 @@ function AuthScreen() {
           <p className="eyebrow">{mode === 'login' ? 'Entrar' : 'Criar conta'}</p>
           <h2>{mode === 'login' ? 'Acesse sua conta' : 'Comece pelo cadastro'}</h2>
         </div>
+        <div className="auth-benefits">
+          <span>Norte Beta liberado</span>
+          <span>Dados por usuario</span>
+          <span>Sem cobranca agora</span>
+        </div>
         <div className="segmented auth-tabs" aria-label="Cadastro ou entrada">
           <button className={mode === 'register' ? 'selected' : ''} type="button" onClick={() => setMode('register')}>
             Cadastro
@@ -2844,6 +2849,30 @@ function ReportsView({ data, totals, accountBalances, lowStock }) {
   const profit = totals.businessIncome - totals.businessExpense
   const personalNet = totals.personalIncome - totals.personalExpense
   const totalBalance = accountBalances.reduce((acc, account) => acc + account.current, 0)
+  const openReceivables = totals.billsReceivable + totals.receivable
+  const reportInsights = [
+    {
+      tone: profit >= 0 ? 'success' : 'warning',
+      icon: TrendingUp,
+      title: profit >= 0 ? 'O negocio esta positivo.' : 'O negocio precisa de atencao.',
+      text:
+        profit >= 0
+          ? `Entradas superam saidas em ${money(profit)} no periodo registrado.`
+          : `Saidas superam entradas em ${money(Math.abs(profit))}. Reveja custos e contas abertas.`,
+    },
+    {
+      tone: openReceivables > totals.billsPayable ? 'success' : 'warning',
+      icon: Calendar,
+      title: openReceivables > totals.billsPayable ? 'Recebimentos cobrem contas abertas.' : 'Contas abertas merecem prioridade.',
+      text: `A receber: ${money(openReceivables)}. A pagar: ${money(totals.billsPayable)}.`,
+    },
+    {
+      tone: lowStock.length ? 'warning' : 'success',
+      icon: Package,
+      title: lowStock.length ? 'Ha itens perto de acabar.' : 'Estoque sem alerta critico.',
+      text: lowStock.length ? `${lowStock[0].name} e o primeiro item para revisar.` : 'Nenhum item esta abaixo do minimo cadastrado.',
+    },
+  ]
   const now = new Date(`${today()}T12:00:00`)
   const cashflow = data.bills
     .filter((bill) => bill.status !== 'paid')
@@ -2881,6 +2910,21 @@ function ReportsView({ data, totals, accountBalances, lowStock }) {
         <Metric title="Estoque critico" value={lowStock.length} icon={Package} tone="amber" />
       </div>
 
+      <div className="insight-grid">
+        {reportInsights.map((insight) => {
+          const Icon = insight.icon
+          return (
+            <article className={`insight-card ${insight.tone}`} key={insight.title}>
+              <Icon size={20} />
+              <div>
+                <strong>{insight.title}</strong>
+                <span>{insight.text}</span>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+
       <div className="content-grid">
         <section className="panel">
           <div className="panel-heading">
@@ -2908,20 +2952,24 @@ function ReportsView({ data, totals, accountBalances, lowStock }) {
             <BarChart3 size={18} />
           </div>
           <div className="category-bars">
-            {topCategories.map(([category, value]) => {
-              const max = topCategories[0]?.[1] || 1
-              return (
-                <div key={category} className="category-row">
-                  <div>
-                    <strong>{category}</strong>
-                    <span>{money(value)}</span>
+            {topCategories.length ? (
+              topCategories.map(([category, value]) => {
+                const max = topCategories[0]?.[1] || 1
+                return (
+                  <div key={category} className="category-row">
+                    <div>
+                      <strong>{category}</strong>
+                      <span>{money(value)}</span>
+                    </div>
+                    <div className="progress-bar">
+                      <span style={{ width: `${Math.max(8, (value / max) * 100)}%` }} />
+                    </div>
                   </div>
-                  <div className="progress-bar">
-                    <span style={{ width: `${Math.max(8, (value / max) * 100)}%` }} />
-                  </div>
-                </div>
-              )
-            })}
+                )
+              })
+            ) : (
+              <p className="empty-state">As maiores categorias aparecem depois dos primeiros lancamentos.</p>
+            )}
           </div>
         </section>
       </div>
