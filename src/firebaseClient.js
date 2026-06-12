@@ -107,7 +107,12 @@ export async function saveFirebaseState(userId, state) {
   const workspaceId = workspaceIdFor(userId)
   const tenantState = withTenantMeta(userId, workspaceId, state)
   await ensureWorkspace(userId, workspaceId, tenantState)
-  await Promise.all(WORKSPACE_COLLECTIONS.map((key) => syncWorkspaceCollection(workspaceId, key, tenantState[key] || [])))
+  await Promise.all(
+    WORKSPACE_COLLECTIONS.map((key) => {
+      const items = getCollectionItems(tenantState, key)
+      return items ? syncWorkspaceCollection(workspaceId, key, items) : Promise.resolve()
+    }),
+  )
   await setDoc(
     stateRef(userId),
     {
@@ -118,6 +123,12 @@ export async function saveFirebaseState(userId, state) {
     { merge: true },
   )
   return tenantState
+}
+
+function getCollectionItems(state, key) {
+  if (key === 'transactions') return Array.isArray(state.events) ? state.events : state.transactions
+  if (key === 'bills') return Array.isArray(state.obligations) ? state.obligations : state.bills
+  return Array.isArray(state[key]) ? state[key] : undefined
 }
 
 function withTenantMeta(userId, workspaceId, state) {

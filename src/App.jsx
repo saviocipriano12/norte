@@ -1,37 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertCircle,
+  Activity,
   ArrowDownRight,
   ArrowUpRight,
-  BarChart3,
-  Bell,
-  Briefcase,
-  Calendar,
+  BellRing,
+  Brain,
+  CalendarClock,
   Check,
-  ClipboardList,
+  ChevronRight,
+  Compass,
   CreditCard,
-  Download,
-  FileText,
-  Home,
+  Fingerprint,
   Landmark,
+  LockKeyhole,
+  LogOut,
   Mic,
-  Package,
-  PieChart,
+  Moon,
   Plus,
-  ReceiptText,
-  RotateCcw,
   Send,
-  Settings,
-  ShoppingCart,
+  ShieldCheck,
   Sparkles,
-  Store,
+  Sun,
   Target,
-  Trash2,
-  TrendingUp,
-  Users,
-  Wallet,
+  Volume2,
+  VolumeX,
+  WalletCards,
+  X,
+  Zap,
 } from 'lucide-react'
 import './App.css'
+import './theme.css'
 import {
   firebaseEnabled,
   loadFirebaseState,
@@ -41,213 +39,220 @@ import {
   resetFirebasePassword,
   saveFirebaseState,
   watchAuth,
-  workspaceIdFor,
 } from './firebaseClient'
-import {
-  cancelPurchaseService,
-  cancelSaleService,
-  createPurchaseOperation,
-  createSaleOperation,
-} from './services/operationsService'
-import { parseEntry } from './services/entryParserService'
-
-const profileOptions = [
-  {
-    id: 'services',
-    label: 'Presto serviços',
-    example: 'manicure, barbeiro, consultor, eletricista',
-    focus: ['agenda leve', 'clientes', 'contas a receber'],
-  },
-  {
-    id: 'products',
-    label: 'Vendo produtos',
-    example: 'loja, revenda, e-commerce, cosmeticos',
-    focus: ['estoque', 'margem', 'fornecedores'],
-  },
-  {
-    id: 'production',
-    label: 'Produzo para vender',
-    example: 'restaurante, confeitaria, artesanato',
-    focus: ['materiais', 'ficha tecnica', 'reposicao'],
-  },
-  {
-    id: 'projects',
-    label: 'Trabalho por projetos',
-    example: 'agencia, freelancer, social media, arquitetura',
-    focus: ['contratos', 'parcelas', 'lucro por projeto'],
-  },
-  {
-    id: 'hybrid',
-    label: 'Misturo mais de um',
-    example: 'servico + produto, loja + encomenda',
-    focus: ['operacao flexivel', 'pessoal e negocio', 'metas'],
-  },
-]
-
-const navItems = [
-  { id: 'home', label: 'Inicio', icon: Home },
-  { id: 'register', label: 'Registrar', icon: Plus },
-  { id: 'movements', label: 'Movimentos', icon: ReceiptText },
-  { id: 'pay', label: 'Pagar/Receber', icon: Bell },
-  { id: 'account', label: 'Conta', icon: Settings },
-]
-
-const primaryViewMap = {
-  today: 'home',
-  assistant: 'home',
-  reports: 'home',
-  goals: 'home',
-  launch: 'register',
-  sales: 'movements',
-  purchases: 'movements',
-  business: 'movements',
-  personal: 'movements',
-  clients: 'pay',
-  bills: 'pay',
-  settings: 'account',
-}
-
-const primaryViewFor = (view) => primaryViewMap[view] || view
-
-const categories = {
-  income: ['Venda', 'Serviço', 'Recebimento', 'Salário', 'Outros ganhos'],
-  expense: ['Mercadoria', 'Material', 'Alimentação', 'Transporte', 'Conta fixa', 'Marketing', 'Casa', 'Outros gastos'],
-  transfer: ['Retirada', 'Reserva', 'Movimentação'],
-}
-
-const createId = () =>
-  window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+import { parseEntryOperation } from './domain/entryParser'
+import { buildBudgetRhythm, buildCommitments, buildSmartAlerts, createMonthlyReport } from './domain/financeProjection'
+import { normalizeAppState } from './domain/stateMigration'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
-const money = (value) =>
+const addDays = (days) => {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+const uid = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random()}`)
+
+const brl = (value) =>
   new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'BRL',
   }).format(Number(value || 0))
 
-const number = (value) =>
-  new Intl.NumberFormat('pt-BR', {
-    maximumFractionDigits: 2,
-  }).format(Number(value || 0))
+const parseMoney = (value) => Number(String(value || '').replace(/\./g, '').replace(',', '.') || 0)
 
-const parseAmountInput = (value) => {
-  const normalized = String(value || '').trim().replace(/\./g, '').replace(',', '.')
-  return Number(normalized || 0)
+const draftCategories = ['Mercado', 'Vendas', 'Operacao', 'Pix', 'Conta fixa', 'Transporte', 'Alimentacao', 'Geral']
+
+const extractAmountFromText = (value) => {
+  const match = String(value || '').replace(/\./g, '').replace(',', '.').match(/(\d+(?:\.\d+)?)/)
+  return match ? Number(match[1]) : 0
 }
 
-const normalizeText = (text) =>
-  text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+const dateLabel = (date) => new Date(`${date}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
 
-const getDefaultAccountId = (accounts, scope) =>
-  accounts.find((account) => account.scope === scope)?.id ||
-  accounts.find((account) => account.scope === 'both')?.id ||
-  accounts[0]?.id ||
-  ''
-
-const getAccountOptions = (accounts, scope) =>
-  accounts.filter((account) => account.scope === scope || account.scope === 'both')
-
-const getBusinessBalance = (accountBalances) =>
-  accountBalances.filter((account) => account.scope !== 'personal').reduce((acc, account) => acc + Number(account.current || 0), 0)
-
-const getPersonalBalance = (accountBalances) =>
-  accountBalances.filter((account) => account.scope !== 'business').reduce((acc, account) => acc + Number(account.current || 0), 0)
-
-const draftNeedsReview = (draft) => !draft.amount || !draft.accountId || !draft.category || !draft.title
-
-const authErrorMessage = (error) => {
-  const code = error?.code || ''
-  if (code.includes('invalid-email')) return 'Digite um email válido.'
-  if (code.includes('missing-password')) return 'Digite sua senha.'
-  if (code.includes('weak-password')) return 'Use uma senha com pelo menos 6 caracteres.'
-  if (code.includes('email-already-in-use')) return 'Esse email já tem uma conta.'
-  if (code.includes('user-not-found') || code.includes('wrong-password') || code.includes('invalid-credential')) {
-    return 'Email ou senha incorretos.'
-  }
-  if (code.includes('too-many-requests')) return 'Muitas tentativas. Espere um pouco e tente novamente.'
-  if (code.includes('network-request-failed')) return 'Sem conexão com o Firebase agora.'
-  return 'Não consegui entrar agora. Confira os dados e tente novamente.'
-}
-
-const buildCatalog = (profile) => {
-  const common = [
-    { id: createId(), name: 'Servi?o principal', type: 'service', price: 0, cost: 0, stock: null, minStock: null },
-    { id: createId(), name: 'Produto principal', type: 'product', price: 0, cost: 0, stock: 0, minStock: 0 },
-  ]
-
-  const byProfile = {
-    services: [
-      { id: createId(), name: 'Servi?o principal', type: 'service', price: 0, cost: 0, stock: null, minStock: null },
-      { id: createId(), name: 'Material de atendimento', type: 'material', price: 0, cost: 0, stock: 0, minStock: 0 },
-    ],
-    products: [
-      { id: createId(), name: 'Produto principal', type: 'product', price: 0, cost: 0, stock: 0, minStock: 0 },
-      { id: createId(), name: 'Mercadoria para revenda', type: 'material', price: 0, cost: 0, stock: 0, minStock: 0 },
-    ],
-    production: [
-      { id: createId(), name: 'Produto produzido', type: 'product', price: 0, cost: 0, stock: 0, minStock: 0 },
-      { id: createId(), name: 'Material principal', type: 'material', price: 0, cost: 0, stock: 0, minStock: 0 },
-      { id: createId(), name: 'Embalagem ou insumo', type: 'material', price: 0, cost: 0, stock: 0, minStock: 0 },
-    ],
-    projects: [
-      { id: createId(), name: 'Projeto principal', type: 'project', price: 0, cost: 0, stock: null, minStock: null },
-      { id: createId(), name: 'Hora t?cnica', type: 'service', price: 0, cost: 0, stock: null, minStock: null },
-    ],
-    hybrid: common,
-  }
-
-  return byProfile[profile] || common
-}
-
-const starterData = {
+const defaultState = {
+  product: 'norte-zero',
   onboarded: false,
-  user: {
-    name: 'Voc?',
-    businessName: 'Meu neg?cio',
-    profile: 'hybrid',
+  plan: {
+    id: 'start',
+    tier: 'Norte Start',
+    status: 'trial',
+    trialDays: 14,
   },
-  accounts: [
-    { id: 'personal-wallet', name: 'Carteira pessoal', scope: 'personal', type: 'cash', balance: 0 },
-    { id: 'business-cash', name: 'Caixa do neg?cio', scope: 'business', type: 'cash', balance: 0 },
-    { id: 'bank', name: 'Banco', scope: 'both', type: 'bank', balance: 0 },
-    { id: 'card', name: 'Cart?o', scope: 'personal', type: 'card', balance: 0 },
+  person: {
+    name: '',
+    workName: '',
+    mode: 'hybrid',
+    profile: 'mei',
+    pain: 'mixing',
+  },
+  ledgers: [
+    { id: 'personal', name: 'Pessoal', accent: 'violet', intent: 'vida, casa, desejos e seguranca' },
+    { id: 'business', name: 'Negocio', accent: 'cyan', intent: 'vendas, clientes, custos e crescimento' },
   ],
-  transactions: [],
-  catalog: buildCatalog('hybrid'),
+  accounts: [
+    { id: 'norte-main', ledger: 'personal', name: 'Carteira pessoal', kind: 'wallet', balance: 0, connected: false },
+    { id: 'norte-business', ledger: 'business', name: 'Conta do negocio', kind: 'bank', balance: 0, connected: false },
+  ],
+  cards: [
+    { id: 'aura', ledger: 'personal', name: 'Norte pessoal', issuer: 'Norte', last4: '7216', limit: 2500, used: 0, dueDay: 12, tone: 'graphite' },
+    { id: 'studio', ledger: 'business', name: 'Norte negocio', issuer: 'Norte', last4: '4364', limit: 4000, used: 0, dueDay: 20, tone: 'violet' },
+  ],
+  connections: [],
+  automations: [
+    { id: 'rule-client', keyword: 'cliente', ledger: 'business', category: 'Vendas', enabled: true },
+    { id: 'rule-market', keyword: 'mercado', ledger: 'personal', category: 'Mercado', enabled: true },
+    { id: 'rule-supplier', keyword: 'fornecedor', ledger: 'business', category: 'Operacao', enabled: true },
+    { id: 'rule-bill', keyword: 'boleto', ledger: 'personal', category: 'Conta fixa', enabled: true },
+  ],
+  events: [],
+  obligations: [],
+  recurrences: [
+    { id: 'rec-internet', title: 'Internet', ledger: 'personal', type: 'payable', amount: 120, day: 10, category: 'Conta fixa', active: true },
+    { id: 'rec-tools', title: 'Ferramentas do negocio', ledger: 'business', type: 'payable', amount: 89, day: 15, category: 'Operacao', active: true },
+  ],
+  budgets: [
+    { id: 'budget-market', ledger: 'personal', category: 'Mercado', label: 'Mercado', limit: 900 },
+    { id: 'budget-food', ledger: 'personal', category: 'Alimentacao', label: 'Comida fora', limit: 520 },
+    { id: 'budget-transport', ledger: 'personal', category: 'Transporte', label: 'Transporte', limit: 420 },
+    { id: 'budget-operation', ledger: 'business', category: 'Operacao', label: 'Operacao', limit: 1200 },
+    { id: 'budget-marketing', ledger: 'business', category: 'Marketing', label: 'Marketing', limit: 950 },
+  ],
   goals: [],
-  clients: [],
-  sales: [],
-  suppliers: [],
-  purchases: [],
-  bills: [],
-  settings: {
-    dailyReminder: true,
-    privacyMode: false,
-    currency: 'BRL',
-  },
+  assistant: [
+    {
+      id: 'hello',
+      role: 'norte',
+      text: 'Eu sou o Norte. Me diga o que aconteceu com seu dinheiro e eu separo pessoal e negocio para voce.',
+      at: new Date().toISOString(),
+    },
+  ],
 }
 
-function migrateData(data) {
+const availableBanks = [
+  { id: 'nubank', name: 'Nubank', ledger: 'personal', balance: 1840, tone: 'aurora' },
+  { id: 'itau', name: 'Itau', ledger: 'personal', balance: 920, tone: 'pulse' },
+  { id: 'inter-pj', name: 'Inter PJ', ledger: 'business', balance: 3100, tone: 'electric' },
+  { id: 'cora', name: 'Cora PJ', ledger: 'business', balance: 2250, tone: 'electric' },
+]
+
+const plans = [
+  {
+    id: 'start',
+    name: 'Norte Start',
+    price: 19,
+    billing: '/mes',
+    text: 'controle pessoal + negocio com IA para vencer a preguica de anotar',
+    headline: 'Para organizar a vida financeira sem virar planilha.',
+    badge: 'comece aqui',
+    cta: 'Assinar Start',
+    limits: { accounts: 3, cards: 2, automations: 5, recurrences: 8, ai: 150 },
+    features: ['IA por texto e voz', 'bussola financeira', 'pessoal e negocio separados', 'alertas essenciais'],
+  },
+  {
+    id: 'pro',
+    name: 'Norte Pro',
+    price: 39,
+    billing: '/mes',
+    text: 'carteira completa, Open Finance futuro, metas, recorrencias e relatorios',
+    headline: 'Para quem quer enxergar tudo antes do dinheiro escapar.',
+    badge: 'mais desejado',
+    cta: 'Assinar Pro',
+    limits: { accounts: 8, cards: 6, automations: 15, recurrences: 25, ai: 600 },
+    features: ['carteira com varias contas', 'cartoes e parcelas', 'relatorios por periodo', 'preparado para Open Finance'],
+  },
+  {
+    id: 'business',
+    name: 'Norte Business',
+    price: 79,
+    billing: '/mes',
+    text: 'gestao forte para MEI, freelancer e pequeno negocio crescer com clareza',
+    headline: 'Para transformar bagunca financeira em operacao.',
+    badge: 'negocio',
+    cta: 'Assinar Business',
+    limits: { accounts: 'unlimited', cards: 'unlimited', automations: 'unlimited', recurrences: 'unlimited', ai: 2000 },
+    features: ['fluxo de caixa do negocio', 'clientes e fornecedores futuros', 'estoque leve futuro', 'memoria segura da IA'],
+  },
+]
+
+const planFormat = (value) => (value === 'unlimited' ? 'ilimitado' : value)
+
+const getActivePlan = (plan) => plans.find((item) => item.id === plan?.id || item.name === plan?.tier) || plans[0]
+
+function getPlanUsage(state) {
   return {
-    ...starterData,
-    ...data,
-    user: { ...starterData.user, ...(data?.user || {}) },
-    accounts: data?.accounts?.length ? data.accounts : starterData.accounts,
-    transactions: data?.transactions || starterData.transactions,
-    catalog: data?.catalog?.length ? data.catalog : starterData.catalog,
-    goals: data?.goals || starterData.goals,
-    clients: data?.clients || starterData.clients,
-    sales: data?.sales || starterData.sales,
-    suppliers: data?.suppliers || starterData.suppliers,
-    purchases: data?.purchases || starterData.purchases,
-    bills: data?.bills || starterData.bills,
-    settings: { ...starterData.settings, ...(data?.settings || {}) },
-    meta: { ...(data?.meta || {}) },
+    accounts: state.accounts.length,
+    cards: state.cards.length,
+    automations: state.automations.length,
+    recurrences: state.recurrences.length,
+    ai: state.assistant.filter((message) => message.role === 'user').length,
   }
+}
+
+function getPlanUsageRows(state) {
+  const activePlan = getActivePlan(state.plan)
+  const usage = getPlanUsage(state)
+  return [
+    { id: 'accounts', label: 'Contas e carteiras', used: usage.accounts, limit: activePlan.limits.accounts },
+    { id: 'cards', label: 'Cartoes ativos', used: usage.cards, limit: activePlan.limits.cards },
+    { id: 'automations', label: 'Regras da IA', used: usage.automations, limit: activePlan.limits.automations },
+    { id: 'recurrences', label: 'Fixos e recorrencias', used: usage.recurrences, limit: activePlan.limits.recurrences },
+    { id: 'ai', label: 'Conversas com IA no mes', used: usage.ai, limit: activePlan.limits.ai },
+  ]
+}
+
+function createDemoState() {
+  return normalizeState({
+    ...defaultState,
+    onboarded: true,
+    person: {
+      name: 'Savio',
+      workName: 'Agencia Norte',
+      mode: 'hybrid',
+    },
+    accounts: [
+      { id: 'demo-personal', ledger: 'personal', name: 'Carteira pessoal', kind: 'wallet', balance: 2280, connected: false },
+      { id: 'demo-business', ledger: 'business', name: 'Conta do negocio', kind: 'bank', balance: 6840, connected: false },
+      { id: 'demo-open-nubank', ledger: 'personal', name: 'Nubank', kind: 'bank', balance: 1840, connected: true },
+      { id: 'demo-open-cora', ledger: 'business', name: 'Cora PJ', kind: 'bank', balance: 3920, connected: true },
+    ],
+    cards: [
+      { id: 'aura', ledger: 'personal', name: 'Nubank Ultravioleta', issuer: 'Nubank', last4: '4364', limit: 3800, used: 640, dueDay: 12, tone: 'nubank' },
+      { id: 'studio', ledger: 'business', name: 'Cora Pro', issuer: 'Cora', last4: '7216', limit: 8000, used: 1180, dueDay: 20, tone: 'cora' },
+    ],
+    connections: [
+      { id: 'nubank', name: 'Nubank', ledger: 'personal', balance: 1840, tone: 'aurora', status: 'ready', lastSync: new Date().toISOString() },
+      { id: 'cora', name: 'Cora PJ', ledger: 'business', balance: 3920, tone: 'electric', status: 'ready', lastSync: new Date().toISOString() },
+    ],
+    events: [
+      { id: 'demo-sale', title: 'Projeto social media cliente', ledger: 'business', type: 'income', amount: 2400, category: 'Vendas', date: today() },
+      { id: 'demo-market', title: 'Mercado da semana', ledger: 'personal', type: 'expense', amount: 320, category: 'Mercado', date: today() },
+      { id: 'demo-ads', title: 'Trafego pago campanha', ledger: 'business', type: 'expense', amount: 450, category: 'Marketing', date: today() },
+      { id: 'demo-installment', title: 'Camera para conteudo', ledger: 'business', type: 'expense', amount: 1800, category: 'Equipamento', date: today(), cardId: 'studio', installments: 6, installmentAmount: 300 },
+    ],
+    obligations: [
+      { id: 'demo-bill', title: 'Fornecedor design', ledger: 'business', type: 'payable', amount: 680, due: today(), status: 'open', category: 'Operacao' },
+      { id: 'demo-receive', title: 'Cliente recorrente', ledger: 'business', type: 'receivable', amount: 1200, due: today(), status: 'open', category: 'Vendas' },
+    ],
+    goals: [
+      { id: 'demo-reserve', title: 'Reserva segura', target: 10000, current: 2800 },
+      { id: 'demo-equipment', title: 'Notebook novo', target: 6500, current: 1700 },
+    ],
+    assistant: [
+      {
+        id: 'demo-ai',
+        role: 'norte',
+        text: 'Demo pronta. Pergunte quanto pode gastar, para onde o dinheiro vai ou registre uma venda por voz.',
+        at: new Date().toISOString(),
+      },
+      ...defaultState.assistant,
+    ],
+  })
+}
+
+function normalizeState(raw) {
+  return normalizeAppState(raw, defaultState, today())
 }
 
 async function fetchJson(url, options) {
@@ -259,3397 +264,2567 @@ async function fetchJson(url, options) {
   return response.json()
 }
 
-function useAppData() {
-  const [data, setData] = useState(null)
-  const [status, setStatus] = useState('loading')
-  const [user, setUser] = useState(null)
-  const [authReady, setAuthReady] = useState(!firebaseEnabled)
+function useNorteStore(forceDemo = false) {
+  const [state, setState] = useState(() => (forceDemo ? createDemoState() : null))
+  const [sync, setSync] = useState(forceDemo ? 'demo' : 'loading')
+  const [authUser, setAuthUser] = useState(null)
+  const [authReady, setAuthReady] = useState(!firebaseEnabled || forceDemo)
 
   useEffect(() => {
-    if (!firebaseEnabled) return undefined
-    return watchAuth((firebaseUser) => {
-      setUser(firebaseUser)
+    if (forceDemo || !firebaseEnabled) return undefined
+    return watchAuth((user) => {
+      setAuthUser(user)
       setAuthReady(true)
-      if (!firebaseUser) setData(null)
+      if (!user) setState(null)
     })
-  }, [])
+  }, [forceDemo])
 
   useEffect(() => {
-    if (firebaseEnabled && (!authReady || !user)) return undefined
-    let active = true
-
-    const loader = firebaseEnabled ? loadFirebaseState(user.uid).then((state) => ({ data: state })) : fetchJson('/api/state')
-
+    if (firebaseEnabled && (!authReady || !authUser)) return undefined
+    let alive = true
+    const loader = firebaseEnabled ? loadFirebaseState(authUser.uid).then((data) => ({ data })) : fetchJson('/api/state')
     loader
       .then((payload) => {
-        if (!active) return
-        setData(payload.data ? migrateData(payload.data) : starterData)
-        setStatus('ready')
+        if (!alive) return
+        setState(normalizeState(payload.data))
+        setSync('ready')
       })
       .catch(() => {
-        if (!active) return
-        setData(starterData)
-        setStatus('offline')
+        if (!alive) return
+        setState(defaultState)
+        setSync('offline')
       })
-
     return () => {
-      active = false
+      alive = false
     }
-  }, [authReady, user])
+  }, [authReady, authUser, forceDemo])
 
   useEffect(() => {
-    if (!data || status === 'loading') return
+    if (!state || sync === 'loading' || forceDemo) return undefined
     const timeout = window.setTimeout(() => {
-      const saver = firebaseEnabled && user
-        ? saveFirebaseState(user.uid, data)
-        : fetchJson('/api/state', {
-            method: 'PUT',
-            body: JSON.stringify({ data }),
-          })
-      Promise.resolve(saver).catch(() => setStatus('offline'))
-    }, 350)
-
+      const saver = firebaseEnabled && authUser
+        ? saveFirebaseState(authUser.uid, state)
+        : fetchJson('/api/state', { method: 'PUT', body: JSON.stringify({ data: state }) })
+      Promise.resolve(saver)
+        .then(() => setSync('ready'))
+        .catch(() => setSync('offline'))
+    }, 500)
     return () => window.clearTimeout(timeout)
-  }, [data, status, user])
+  }, [state, sync, authUser, forceDemo])
 
-  return [data, setData, status, user, authReady]
+  return { state, setState, sync, setSync, authUser, authReady }
+}
+
+function derive(state) {
+  const byLedger = Object.fromEntries(state.ledgers.map((ledger) => [ledger.id, { income: 0, expense: 0, balance: 0 }]))
+  state.accounts.forEach((account) => {
+    const bucket = byLedger[account.ledger] || byLedger.personal || Object.values(byLedger)[0]
+    if (bucket) bucket.balance += Number(account.balance || 0)
+  })
+  state.events.forEach((event) => {
+    const bucket = byLedger[event.ledger] || byLedger.personal
+    if (event.type === 'income') bucket.income += Number(event.amount || 0)
+    if (event.type === 'expense') bucket.expense += Number(event.amount || 0)
+  })
+  Object.values(byLedger).forEach((bucket) => {
+    bucket.balance += bucket.income - bucket.expense
+  })
+  const totalBalance = Object.values(byLedger).reduce((sum, item) => sum + item.balance, 0)
+  const upcoming = state.obligations.filter((item) => item.status !== 'done').sort((a, b) => `${a.due}`.localeCompare(`${b.due}`))
+  const payable = upcoming.filter((item) => item.type === 'payable').reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  const receivable = upcoming.filter((item) => item.type === 'receivable').reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  const recurringPayable = state.recurrences
+    .filter((item) => item.active && item.type === 'payable')
+    .reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  const recurringReceivable = state.recurrences
+    .filter((item) => item.active && item.type === 'receivable')
+    .reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  const cardDebt = state.cards.reduce((sum, card) => sum + Number(card.used || 0), 0)
+  const installmentEvents = state.events.filter((event) => event.type === 'expense' && Number(event.installments || 1) > 1)
+  const installmentMonthly = installmentEvents.reduce((sum, event) => sum + Number(event.installmentAmount || 0), 0)
+  const connectedBalance = state.connections.reduce((sum, item) => sum + Number(item.balance || 0), 0)
+  const eventDays = new Set(state.events.map((event) => event.date)).size
+  const monthlyCommitment = payable + recurringPayable + installmentMonthly + cardDebt
+  const safeToSpend = Math.max(0, totalBalance + receivable + recurringReceivable - monthlyCommitment)
+  const categoryMap = new Map()
+  const addCategory = (label, amount, ledger = 'personal') => {
+    const key = label || 'Geral'
+    const current = categoryMap.get(key) || { label: key, amount: 0, personal: 0, business: 0 }
+    current.amount += Number(amount || 0)
+    current[ledger === 'business' ? 'business' : 'personal'] += Number(amount || 0)
+    categoryMap.set(key, current)
+  }
+  state.events
+    .filter((event) => event.type === 'expense')
+    .forEach((event) => addCategory(event.category || 'Geral', event.installments > 1 ? event.installmentAmount : event.amount, event.ledger))
+  state.recurrences
+    .filter((item) => item.active && item.type === 'payable')
+    .forEach((item) => addCategory(item.category || 'Fixo mensal', item.amount, item.ledger))
+  if (cardDebt) addCategory('Cartoes', cardDebt, 'personal')
+  const categoryTotal = [...categoryMap.values()].reduce((sum, item) => sum + item.amount, 0)
+  const moneyMap = [...categoryMap.values()]
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 5)
+    .map((item) => ({ ...item, percent: categoryTotal ? Math.round((item.amount / categoryTotal) * 100) : 0 }))
+  const personalOutflow = moneyMap.reduce((sum, item) => sum + item.personal, 0)
+  const businessOutflow = moneyMap.reduce((sum, item) => sum + item.business, 0)
+  const report = createMonthlyReport(state.events, moneyMap, today())
+  const budgetRhythm = buildBudgetRhythm({
+    budgets: state.budgets,
+    events: state.events,
+    currentDate: today(),
+  })
+  const score = Math.max(
+    4,
+    Math.min(
+      100,
+      Math.round(
+        (totalBalance > 0 ? 24 : 8) +
+          (payable ? Math.min(22, (receivable / Math.max(payable, 1)) * 22) : 22) +
+          Math.min(20, eventDays * 4) +
+          Math.min(16, state.goals.length * 5 + 6) +
+          Math.max(0, 18 - upcoming.filter((item) => item.due < today()).length * 8),
+      ),
+    ),
+  )
+  const forecast = [
+    { label: 'agora', value: totalBalance },
+    { label: 'contas', value: totalBalance - payable - recurringPayable },
+    { label: 'parcelas', value: totalBalance - payable - recurringPayable - installmentMonthly },
+    { label: 'previsto', value: totalBalance - monthlyCommitment + receivable + recurringReceivable },
+  ]
+  const commitments = buildCommitments({
+    upcoming,
+    recurrences: state.recurrences,
+    installmentEvents,
+    currentDate: today(),
+  })
+  const alerts = buildSmartAlerts({
+    upcoming,
+    safeToSpend,
+    monthlyCommitment,
+    cardDebt,
+    installmentMonthly,
+    report,
+    moneyMap,
+    budgetRhythm,
+    currentDate: today(),
+  })
+  const nextActions = [
+    upcoming[0] && {
+      id: 'settle',
+      tone: 'urgent',
+      title: upcoming[0].type === 'receivable' ? 'Confirmar recebimento' : 'Resolver conta',
+      text: `${upcoming[0].title} - ${brl(upcoming[0].amount)} vence ${dateLabel(upcoming[0].due)}`,
+      action: 'settle-first',
+    },
+    !state.connections.length && {
+      id: 'connect',
+      tone: 'cyan',
+      title: 'Conectar sua vida financeira',
+      text: 'Junte bancos pessoais e do negocio em uma carteira so.',
+      action: 'connect',
+    },
+    state.recurrences.length < 3 && {
+      id: 'recurrence',
+      tone: 'cyan',
+      title: 'Mapear gasto fixo',
+      text: 'Cadastre recorrencias para o Norte prever antes de voce lembrar.',
+      action: 'recurrence',
+    },
+    cardDebt > 0 && {
+      id: 'card',
+      tone: 'violet',
+      title: 'Fatura no radar',
+      text: `${brl(cardDebt)} em cartoes antes de calcular seu livre real.`,
+      action: 'card',
+    },
+    !state.goals.length && {
+      id: 'goal',
+      tone: 'gold',
+      title: 'Criar primeira meta',
+      text: 'Separe dinheiro de objetivo antes que vire gasto comum.',
+      action: 'goal',
+    },
+    {
+      id: 'talk',
+      tone: 'pink',
+      title: 'Falar com o Norte',
+      text: safeToSpend ? `${brl(safeToSpend)} livre hoje. Pergunte o que fazer.` : 'Monte sua rota com uma conversa rapida.',
+      action: 'command',
+    },
+  ].filter(Boolean).slice(0, 3)
+  return {
+    byLedger,
+    totalBalance,
+    connectedBalance,
+    upcoming,
+    payable,
+    receivable,
+    recurringPayable,
+    recurringReceivable,
+    cardDebt,
+    installmentMonthly,
+    monthlyCommitment,
+    commitments,
+    alerts,
+    moneyMap,
+    outflowTotal: categoryTotal,
+    personalOutflow,
+    businessOutflow,
+    report,
+    budgetRhythm,
+    safeToSpend,
+    forecast,
+    nextActions,
+    score,
+    status: score > 80 ? 'apontando para o norte' : score > 58 ? 'quase no eixo' : score > 34 ? 'fora da rota' : 'modo resgate',
+    insights: [
+      {
+        id: 'spend',
+        icon: Activity,
+        label: 'Livre hoje',
+        value: brl(safeToSpend),
+        text: monthlyCommitment ? `${brl(monthlyCommitment)} reservado` : 'sem contas abertas agora',
+      },
+      {
+        id: 'income',
+        icon: ArrowDownRight,
+        label: 'A receber',
+        value: brl(receivable),
+        text: receivable ? 'dinheiro futuro ja previsto' : 'nenhum recebimento previsto',
+      },
+      {
+        id: 'risk',
+        icon: BellRing,
+        label: 'Proximo alerta',
+        value: upcoming[0] ? dateLabel(upcoming[0].due) : cardDebt ? brl(cardDebt) : 'limpo',
+        text: upcoming[0]?.title || (cardDebt ? 'em faturas abertas' : 'sem vencimentos na fila'),
+      },
+    ],
+  }
+}
+
+function classifyText(text) {
+  const lower = text.toLowerCase()
+  const amount = extractAmountFromText(lower)
+  const businessWords = ['cliente', 'vendi', 'venda', 'negocio', 'fornecedor', 'material', 'servico', 'pix da loja', 'estoque']
+  const incomeWords = ['recebi', 'ganhei', 'entrou', 'vendi', 'pagou', 'venda']
+  const billWords = ['pagar', 'vence', 'vencimento', 'boleto', 'conta']
+  const category = lower.includes('mercado')
+    ? 'Mercado'
+    : lower.includes('cliente') || lower.includes('vendi') || lower.includes('venda')
+      ? 'Vendas'
+      : lower.includes('material') || lower.includes('fornecedor')
+        ? 'Operacao'
+        : lower.includes('pix')
+          ? 'Pix'
+          : 'Geral'
+  return {
+    id: uid(),
+    kind: billWords.some((word) => lower.includes(word)) ? 'obligation' : 'event',
+    ledger: businessWords.some((word) => lower.includes(word)) ? 'business' : 'personal',
+    type: incomeWords.some((word) => lower.includes(word)) ? 'income' : 'expense',
+    amount,
+    category,
+    title: text.slice(0, 80),
+    date: today(),
+    due: today(),
+    confidence: amount ? 0.82 : 0.46,
+  }
+}
+
+function looksLikeFinancialInput(text) {
+  const lower = text.toLowerCase()
+  const words = [
+    'paguei',
+    'gastei',
+    'comprei',
+    'recebi',
+    'vendi',
+    'ganhei',
+    'entrou',
+    'pix',
+    'boleto',
+    'cartao',
+    'conta',
+    'cliente',
+    'mercado',
+    'fornecedor',
+    'material',
+    'salario',
+    'aluguel',
+    'internet',
+  ]
+  return words.some((word) => lower.includes(word)) || extractAmountFromText(text) > 0
+}
+
+function inferDateFromText(text) {
+  const lower = text.toLowerCase()
+  if (lower.includes('amanha')) return addDays(1)
+  if (lower.includes('hoje')) return today()
+  if (lower.includes('semana que vem') || lower.includes('semana')) return addDays(7)
+  const dayMatch = lower.match(/dia\s+(\d{1,2})/)
+  if (!dayMatch) return null
+  const date = new Date()
+  date.setDate(Number(dayMatch[1]))
+  if (date < new Date(today())) date.setMonth(date.getMonth() + 1)
+  return date.toISOString().slice(0, 10)
+}
+
+function isFutureBill(text) {
+  const lower = text.toLowerCase()
+  return ['pagar', 'vence', 'vencimento', 'boleto', 'conta'].some((word) => lower.includes(word))
+}
+
+function normalizeCategoryLabel(category) {
+  const clean = String(category || 'Geral')
+  return clean
+    .replace('ServiÃ§o', 'Servico')
+    .replace('SalÃ¡rio', 'Salario')
+    .replace('MovimentaÃ§Ã£o', 'Movimentacao')
+    .replace('AlimentaÃ§Ã£o', 'Alimentacao')
+}
+
+function draftFromParsed(item) {
+  const bill = isFutureBill(item.note || item.title)
+  return {
+    id: item.id || uid(),
+    kind: bill ? 'obligation' : 'event',
+    ledger: item.scope === 'business' ? 'business' : 'personal',
+    type: item.type === 'income' ? 'income' : 'expense',
+    amount: Number(item.amount || 0),
+    category: normalizeCategoryLabel(item.category),
+    title: item.note || item.title || 'Movimento',
+    date: item.date || today(),
+    due: item.date || today(),
+    confidence: 0.86,
+  }
+}
+
+function applyAutomation(draft, state) {
+  const text = `${draft.title} ${draft.category}`.toLowerCase()
+  const rule = state.automations?.find((item) => item.enabled && text.includes(String(item.keyword || '').toLowerCase()))
+  if (!rule) return draft
+  return {
+    ...draft,
+    ledger: rule.ledger,
+    category: rule.category,
+    automationId: rule.id,
+    confidence: Math.max(Number(draft.confidence || 0), 0.92),
+  }
+}
+
+function draftReason(draft) {
+  if (draft.automationId) return 'Usei uma regra do Autopiloto para separar melhor.'
+  if (draft.ledger === 'business' && draft.type === 'income') return 'Entrada com cara de cliente ou trabalho vai para o negocio.'
+  if (draft.ledger === 'business') return 'Termos de operacao, fornecedor ou projeto indicam negocio.'
+  if (draft.category === 'Mercado' || draft.category === 'Conta fixa') return 'Despesa do dia a dia ficou no pessoal.'
+  return 'Separei pelo contexto da frase e deixei para voce confirmar.'
+}
+
+function draftImpact(draft, finance) {
+  const amount = Number(draft.amount || 0)
+  if (draft.kind === 'obligation') return `${draft.type === 'income' ? 'entra na agenda a receber' : 'vira compromisso futuro'} em ${dateLabel(draft.due || today())}.`
+  if (draft.type === 'income') return `aumenta a carteira ${draft.ledger === 'business' ? 'do negocio' : 'pessoal'} em ${brl(amount)}.`
+  const after = finance ? brl(Math.max(0, Number(finance.safeToSpend || 0) - amount)) : brl(amount)
+  return `reduz o dinheiro livre estimado para perto de ${after}.`
+}
+
+function suggestBudgetLimit(item) {
+  const used = Number(item?.used || 0)
+  const limit = Number(item?.limit || 0)
+  const base = Math.max(500, limit, used * 1.15)
+  return Math.ceil(base / 50) * 50
+}
+
+function nextCardDueDate(card, currentDate = today()) {
+  const date = new Date(`${currentDate}T12:00:00`)
+  const due = new Date(date)
+  due.setDate(Math.max(1, Math.min(31, Number(card?.dueDay || 1))))
+  if (due < date) due.setMonth(due.getMonth() + 1)
+  return due.toISOString().slice(0, 10)
+}
+
+function getCardHealth(card, currentDate = today()) {
+  const limit = Number(card?.limit || 0)
+  const used = Number(card?.used || 0)
+  const free = Math.max(0, limit - used)
+  const usedPercent = limit > 0 ? Math.min(999, Math.round((used / limit) * 100)) : 0
+  const due = nextCardDueDate(card, currentDate)
+  const daysToDue = Math.max(0, Math.ceil((new Date(`${due}T12:00:00`) - new Date(`${currentDate}T12:00:00`)) / 86400000))
+  const tone = usedPercent >= 90 ? 'danger' : usedPercent >= 70 || daysToDue <= 3 ? 'warning' : 'safe'
+  return {
+    limit,
+    used,
+    free,
+    usedPercent,
+    due,
+    daysToDue,
+    tone,
+  }
+}
+
+function parseSmartDrafts(text, state) {
+  const parsed = parseEntryOperation({
+    text,
+    data: state,
+    defaultScope: 'personal',
+    source: 'norte-zero',
+  }).map((item) => applyAutomation(draftFromParsed(item), state))
+
+  if (parsed.length) return parsed
+  const fallback = applyAutomation(classifyText(text), state)
+  return fallback.amount ? [fallback] : []
+}
+
+function answerQuestion(text, state, finance) {
+  const lower = text.toLowerCase()
+  if (['quanto posso gastar', 'posso gastar', 'livre'].some((phrase) => lower.includes(phrase))) {
+    return `Voce tem ${brl(finance.safeToSpend)} livre agora. Eu preservei ${brl(finance.payable)} para contas e considerei ${brl(finance.receivable)} a receber.`
+  }
+  if (['como estou', 'minha rota', 'bussola', 'norte'].some((phrase) => lower.includes(phrase))) {
+    return `Sua bussola esta em ${finance.score}%: ${finance.status}. O melhor proximo passo e registrar os movimentos de hoje e quitar o que vencer primeiro.`
+  }
+  if (['contas', 'vencendo', 'pagar'].some((phrase) => lower.includes(phrase))) {
+    const next = finance.upcoming[0]
+    return next
+      ? `A proxima conta e ${next.title}, ${brl(next.amount)}, vencendo em ${dateLabel(next.due)}.`
+      : 'Nao encontrei contas abertas. Se voce tiver boleto ou recebimento futuro, me diga que eu coloco na agenda.'
+  }
+  if (['para onde', 'onde meu dinheiro', 'gastei mais', 'categorias'].some((phrase) => lower.includes(phrase))) {
+    const top = finance.moneyMap[0]
+    return top
+      ? `Seu maior peso agora e ${top.label}: ${brl(top.amount)}, cerca de ${top.percent}% das saidas mapeadas. Pessoal soma ${brl(finance.personalOutflow)} e negocio soma ${brl(finance.businessOutflow)}.`
+      : 'Ainda nao tenho saidas suficientes para mapear. Registre alguns gastos ou fixos e eu mostro o caminho do dinheiro.'
+  }
+  if (['plano', 'assinatura', 'preco'].some((phrase) => lower.includes(phrase))) {
+    return `Voce esta no ${state.plan.tier}. A evolucao natural e o Norte Pro para Open Finance, recorrencias e alertas inteligentes.`
+  }
+  if (['autopiloto', 'regras', 'automatico'].some((phrase) => lower.includes(phrase))) {
+    return `Seu Autopiloto tem ${state.automations.length} regras ativas para separar pessoal e negocio antes de salvar. Posso usar isso para reduzir sua preguiça de anotar.`
+  }
+  return null
+}
+
+function UnderstandingRail({ state, drafts, pendingDraft, command }) {
+  const lastUserMessage = state.assistant.find((message) => message.role === 'user')?.text
+  const activeDraft = drafts[0] || pendingDraft
+  const sourceText = command.trim() || lastUserMessage || 'Toque no microfone e fale como voce falaria comigo.'
+  const understood = activeDraft
+    ? [
+        activeDraft.ledger === 'business' ? 'Negocio' : 'Pessoal',
+        activeDraft.type === 'income' ? 'Entrada' : 'Saida',
+        activeDraft.category,
+        activeDraft.amount ? brl(activeDraft.amount) : 'valor aberto',
+      ]
+    : ['separacao automatica', 'confirmacao antes de salvar', 'memoria segura']
+
+  return (
+    <section className="understanding-rail">
+      <article>
+        <span>1</span>
+        <div>
+          <small>voce falou</small>
+          <strong>{sourceText}</strong>
+        </div>
+      </article>
+      <article>
+        <span>2</span>
+        <div>
+          <small>eu entendi</small>
+          <strong>{understood.join(' - ')}</strong>
+        </div>
+      </article>
+      <article>
+        <span>3</span>
+        <div>
+          <small>proximo passo</small>
+          <strong>{drafts.length ? 'confirmar ou ajustar' : pendingDraft ? 'responder o detalhe' : 'falar ou escrever'}</strong>
+        </div>
+      </article>
+    </section>
+  )
 }
 
 function App() {
-  const [data, setData, dataStatus, firebaseUser, authReady] = useAppData()
-  const [active, setActive] = useState('home')
-  const activePrimary = primaryViewFor(active)
-  const navigateTo = (view) => setActive(view)
-  const [quickText, setQuickText] = useState('')
+  const [demoMode, setDemoMode] = useState(() => new URLSearchParams(window.location.search).get('demo') === '1')
+  const { state, setState, sync, setSync, authUser, authReady } = useNorteStore(demoMode)
+  const [mode, setMode] = useState(() => (new URLSearchParams(window.location.search).get('mode') === 'command' ? 'command' : 'home'))
+  const [theme, setTheme] = useState(() => {
+    const saved = window.localStorage.getItem('norte-theme')
+    if (saved === 'light' || saved === 'dark') return saved
+    return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+  })
+  const [sheet, setSheet] = useState(null)
+  const [command, setCommand] = useState('')
   const [drafts, setDrafts] = useState([])
-  const [captureError, setCaptureError] = useState('')
-  const [defaultScope, setDefaultScope] = useState('business')
-  const [isListening, setIsListening] = useState(false)
+  const [pendingDraft, setPendingDraft] = useState(null)
+  const [listening, setListening] = useState(false)
+  const [aiState, setAiState] = useState('idle')
+  const [lastSaved, setLastSaved] = useState(null)
+  const [dockCompact, setDockCompact] = useState(false)
+  const [voiceEnabled, setVoiceEnabled] = useState(true)
   const recognitionRef = useRef(null)
-  const [manual, setManual] = useState({
-    type: 'expense',
-    scope: 'business',
-    title: '',
-    amount: '',
-    category: 'Outros gastos',
-    accountId: '',
-    date: today(),
-  })
-  const [newGoal, setNewGoal] = useState({ title: '', target: '', due: '' })
-  const [newCatalogItem, setNewCatalogItem] = useState({ name: '', type: 'service', price: '', cost: '', stock: '', minStock: '' })
-  const [newAccount, setNewAccount] = useState({ name: '', scope: 'business', type: 'cash', balance: '' })
-  const [newClient, setNewClient] = useState({ name: '', phone: '', receivable: '', due: '', notes: '' })
-  const [newBill, setNewBill] = useState({ title: '', type: 'payable', scope: 'business', amount: '', due: '', category: 'Conta fixa' })
-  const [goalDrafts, setGoalDrafts] = useState({})
-  const safeData = data || starterData
-  const firstCatalogItem = safeData.catalog?.[0]
-  const [newSale, setNewSale] = useState({
-    clientName: '',
-    itemId: firstCatalogItem?.id || '',
-    quantity: '1',
-    unitPrice: firstCatalogItem?.price || '',
-    status: 'paid',
-    date: today(),
-    due: today(),
-    notes: '',
-  })
-  const [newPurchase, setNewPurchase] = useState({
-    supplierName: '',
-    itemId: firstCatalogItem?.id || '',
-    quantity: '1',
-    unitCost: firstCatalogItem?.cost || '',
-    status: 'paid',
-    date: today(),
-    due: today(),
-    notes: '',
-  })
 
-  const transactions = useMemo(
-    () => [...safeData.transactions].sort((a, b) => `${b.date}`.localeCompare(`${a.date}`)),
-    [safeData.transactions],
-  )
+  const finance = useMemo(() => (state ? derive(state) : null), [state])
 
-  const totals = useMemo(() => {
-    const todayDate = today()
-    const sum = (items, predicate) => items.filter(predicate).reduce((acc, item) => acc + Number(item.amount || 0), 0)
-    const todayItems = safeData.transactions.filter((item) => item.date === todayDate)
-    const businessItems = safeData.transactions.filter((item) => item.scope === 'business')
-    const personalItems = safeData.transactions.filter((item) => item.scope === 'personal')
-    return {
-      todayIncome: sum(todayItems, (item) => item.type === 'income'),
-      todayExpense: sum(todayItems, (item) => item.type === 'expense'),
-      businessIncome: sum(businessItems, (item) => item.type === 'income'),
-      businessExpense: sum(businessItems, (item) => item.type === 'expense'),
-      personalIncome: sum(personalItems, (item) => item.type === 'income'),
-      personalExpense: sum(personalItems, (item) => item.type === 'expense'),
-      receivable: safeData.clients.reduce((acc, client) => acc + Number(client.receivable || 0), 0),
-      billsReceivable: safeData.bills.filter((bill) => bill.status !== 'paid' && bill.type === 'receivable').reduce((acc, bill) => acc + Number(bill.amount || 0), 0),
-      billsPayable: safeData.bills.filter((bill) => bill.status !== 'paid' && bill.type === 'payable').reduce((acc, bill) => acc + Number(bill.amount || 0), 0),
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    window.localStorage.setItem('norte-theme', theme)
+  }, [theme])
+
+  useEffect(() => {
+    let ticking = false
+    const updateDock = () => {
+      setDockCompact(window.scrollY > 220)
+      ticking = false
     }
-  }, [safeData])
+    const onScroll = () => {
+      if (ticking) return
+      ticking = true
+      window.requestAnimationFrame(updateDock)
+    }
+    updateDock()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
 
-  const accountBalances = useMemo(
-    () =>
-      safeData.accounts.map((account) => {
-        const movement = safeData.transactions
-          .filter((item) => item.accountId === account.id)
-          .reduce((acc, item) => {
-            if (item.type === 'income') return acc + Number(item.amount || 0)
-            if (item.type === 'expense') return acc - Number(item.amount || 0)
-            return acc
-          }, 0)
-        return { ...account, current: Number(account.balance || 0) + movement }
-      }),
-    [safeData.accounts, safeData.transactions],
-  )
+  function startDemo() {
+    setState(createDemoState())
+    setSync('demo')
+    setDemoMode(true)
+    window.history.replaceState(null, '', '?demo=1')
+  }
 
-  const lowStock = safeData.catalog.filter((item) => item.stock !== null && Number(item.stock) <= Number(item.minStock || 0))
-  const profile = profileOptions.find((item) => item.id === safeData.user.profile) || profileOptions[4]
-  const activeWorkspaceId = safeData.meta?.workspaceId || (firebaseUser ? workspaceIdFor(firebaseUser.uid) : 'local-dev')
+  function speak(text) {
+    if (!voiceEnabled || !window.speechSynthesis || !text) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = 'pt-BR'
+    utterance.rate = 1
+    utterance.pitch = 1
+    window.speechSynthesis.speak(utterance)
+  }
 
-  function completeOnboarding(event) {
-    event.preventDefault()
-    const form = new FormData(event.currentTarget)
-    const profileId = form.get('profile')
-    const businessName = form.get('businessName') || 'Meu negócio'
-    const name = form.get('name') || 'Você'
-    const businessBalance = parseAmountInput(form.get('businessBalance'))
-    const personalBalance = parseAmountInput(form.get('personalBalance'))
-    const controlsStock = form.get('controlsStock') === 'yes'
-    const goalTitle = String(form.get('goalTitle') || '').trim()
-    const goalTarget = parseAmountInput(form.get('goalTarget'))
-    const catalog = buildCatalog(profileId).map((item) =>
-      controlsStock || item.type === 'service' || item.type === 'project'
-        ? item
-        : { ...item, stock: null, minStock: null },
+  if (firebaseEnabled && authReady && !authUser && !demoMode) return <Auth onDemo={startDemo} />
+
+  if (!state || !finance) {
+    return (
+      <main className="zero-boot">
+        <div className="zero-orb"><Compass /></div>
+        <strong>Norte</strong>
+        <span>criando sua experiencia financeira</span>
+      </main>
     )
-    setData({
-      ...starterData,
-      onboarded: true,
-      user: { name, businessName, profile: profileId },
-      accounts: starterData.accounts.map((account) => {
-        if (account.id === 'business-cash') return { ...account, balance: businessBalance }
-        if (account.id === 'personal-wallet') return { ...account, balance: personalBalance }
-        return account
-      }),
-      catalog,
-      goals: goalTitle && goalTarget
-        ? [{ id: createId(), title: goalTitle, target: goalTarget, current: 0, due: today(), scope: 'business' }]
-        : [],
+  }
+
+  if (!state.onboarded) return <Onboarding onDone={(next) => setState(next)} />
+
+  const mutate = (fn) => setState((current) => normalizeState(fn(normalizeState(current))))
+
+  function addEvent(payload) {
+    mutate((current) => ({
+      ...current,
+      events: [{ id: uid(), date: today(), ...payload }, ...current.events],
+    }))
+  }
+
+  function addObligation(payload) {
+    mutate((current) => ({
+      ...current,
+      obligations: [{ id: uid(), due: today(), status: 'open', ...payload }, ...current.obligations],
+    }))
+  }
+
+  function settleObligation(obligationId) {
+    mutate((current) => {
+      const obligation = current.obligations.find((item) => item.id === obligationId)
+      if (!obligation) return current
+      const event = {
+        id: uid(),
+        title: obligation.title,
+        ledger: obligation.ledger,
+        type: obligation.type === 'receivable' ? 'income' : 'expense',
+        amount: obligation.amount,
+        category: obligation.category || 'Agenda',
+        date: today(),
+      }
+      return {
+        ...current,
+        events: [event, ...current.events],
+        obligations: current.obligations.map((item) => (item.id === obligationId ? { ...item, status: 'done' } : item)),
+        assistant: [
+          {
+            id: uid(),
+            role: 'norte',
+            text: `${obligation.type === 'receivable' ? 'Recebimento' : 'Pagamento'} baixado. Eu ja levei isso para o feed e recalculei sua rota.`,
+            at: new Date().toISOString(),
+          },
+          ...current.assistant,
+        ],
+      }
     })
   }
 
-  async function parseQuickText() {
-    setCaptureError('')
-    const parsed = await parseEntry({ text: quickText, data, defaultScope }).catch((error) => {
-      setCaptureError(error.message || 'Nao consegui interpretar agora.')
-      return []
+  function handleCommand(text = command) {
+    if (!text.trim()) return
+    setAiState('thinking')
+    const lower = text.toLowerCase()
+    const answer = answerQuestion(text, state, finance)
+    if (answer) {
+      setDrafts([])
+      setPendingDraft(null)
+      setAiState('ready')
+      speak(answer)
+      mutate((current) => ({
+        ...current,
+        assistant: [
+          { id: uid(), role: 'user', text, at: new Date().toISOString() },
+          { id: uid(), role: 'norte', text: answer, at: new Date().toISOString() },
+          ...current.assistant,
+        ],
+      }))
+      setCommand('')
+      return
+    }
+
+    if (pendingDraft && ['cancela', 'cancelar', 'deixa', 'esquece'].some((word) => lower.includes(word))) {
+      const reply = 'Fechado, descartei esse rascunho. Quando quiser, me fala de novo do seu jeito.'
+      setPendingDraft(null)
+      setDrafts([])
+      setAiState('idle')
+      speak(reply)
+      mutate((current) => ({
+        ...current,
+        assistant: [
+          { id: uid(), role: 'user', text, at: new Date().toISOString() },
+          { id: uid(), role: 'norte', text: reply, at: new Date().toISOString() },
+          ...current.assistant,
+        ],
+      }))
+      setCommand('')
+      return
+    }
+
+    const pendingAmount = extractAmountFromText(text)
+    if (pendingDraft && pendingAmount) {
+      const inferredDate = inferDateFromText(text)
+      const completed = applyAutomation(
+        {
+          ...pendingDraft,
+          id: uid(),
+          amount: pendingAmount,
+          ...(inferredDate ? { date: inferredDate, due: inferredDate } : {}),
+          confidence: 0.9,
+        },
+        state,
+      )
+      const reply = `Perfeito. Montei ${completed.ledger === 'business' ? 'no negocio' : 'no pessoal'}: ${completed.title}, ${brl(completed.amount)} em ${completed.category}${completed.kind === 'obligation' ? ` para ${dateLabel(completed.due)}` : ''}. Ajuste se precisar e confirme antes de salvar.`
+      setPendingDraft(null)
+      setDrafts([completed])
+      setAiState('ready')
+      speak(reply)
+      mutate((current) => ({
+        ...current,
+        assistant: [
+          { id: uid(), role: 'user', text, at: new Date().toISOString() },
+          { id: uid(), role: 'norte', text: reply, at: new Date().toISOString() },
+          ...current.assistant,
+        ],
+      }))
+      setCommand('')
+      return
+    }
+
+    const inferredDate = inferDateFromText(text)
+    const nextDrafts = parseSmartDrafts(text, state).map((draft) => (
+      inferredDate ? { ...draft, date: inferredDate, due: inferredDate } : draft
+    ))
+    setDrafts(nextDrafts)
+    const total = nextDrafts.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+    const needsAmount = !nextDrafts.length && looksLikeFinancialInput(text)
+    const incompleteDraft = needsAmount
+      ? applyAutomation({
+          ...classifyText(text),
+          ...(inferredDate ? { date: inferredDate, due: inferredDate } : {}),
+        }, state)
+      : null
+    setPendingDraft(incompleteDraft)
+    setAiState(nextDrafts.length ? 'ready' : needsAmount ? 'asking' : 'idle')
+    const reply = nextDrafts.length
+      ? `Separei ${nextDrafts.length} movimento${nextDrafts.length > 1 ? 's' : ''}, totalizando ${brl(total)}. Confirma o que estiver certo.`
+      : needsAmount
+        ? `Entendi: ${incompleteDraft.ledger === 'business' ? 'negocio' : 'pessoal'}, ${incompleteDraft.category}. Qual foi o valor?`
+        : 'Me fala como aconteceu, por exemplo: paguei 80 no mercado, recebi 300 de cliente ou venceu boleto de internet.'
+    speak(reply)
+    mutate((current) => ({
+      ...current,
+      assistant: [
+        { id: uid(), role: 'user', text, at: new Date().toISOString() },
+        {
+          id: uid(),
+          role: 'norte',
+          text: reply,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+    setCommand('')
+  }
+
+  function saveDraft(draft) {
+    if (!draft?.amount) return
+    if (draft.kind === 'obligation') {
+      addObligation({
+        title: draft.title,
+        ledger: draft.ledger,
+        type: draft.type === 'income' ? 'receivable' : 'payable',
+        amount: draft.amount,
+        due: draft.due || draft.date || today(),
+        category: draft.category,
+      })
+    } else {
+      addEvent({
+        title: draft.title,
+        ledger: draft.ledger,
+        type: draft.type,
+        amount: draft.amount,
+        category: draft.category,
+        date: draft.date || today(),
+      })
+    }
+    setLastSaved({
+      id: uid(),
+      title: draft.title,
+      amount: draft.amount,
+      ledger: draft.ledger,
+      kind: draft.kind,
+      type: draft.type,
+      category: draft.category,
     })
-    setDrafts(parsed)
-    if (parsed.length) setQuickText('')
+  }
+
+  function updateDraft(draftId, patch) {
+    setDrafts((current) => current.map((item) => (item.id === draftId ? { ...item, ...patch } : item)))
+  }
+
+  function updateDraftDate(draftId, value) {
+    setDrafts((current) => current.map((item) => {
+      if (item.id !== draftId) return item
+      return item.kind === 'obligation' ? { ...item, due: value } : { ...item, date: value }
+    }))
+  }
+
+  function dismissDraft(draftId) {
+    setDrafts((current) => {
+      const next = current.filter((item) => item.id !== draftId)
+      if (!next.length) setAiState('idle')
+      return next
+    })
+  }
+
+  function dismissPending() {
+    setPendingDraft(null)
+    setAiState('idle')
+  }
+
+  function confirmDraft(draftId) {
+    const draft = drafts.find((item) => item.id === draftId)
+    if (!draft) return
+    saveDraft(draft)
+    const reply = `Salvei ${brl(draft.amount)} em ${draft.ledger === 'business' ? 'Negocio' : 'Pessoal'} e atualizei sua rota financeira.`
+    speak(reply)
+    mutate((current) => ({
+      ...current,
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: reply,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+    setDrafts((current) => current.filter((item) => item.id !== draftId))
+    setAiState('done')
+  }
+
+  function confirmAllDrafts() {
+    if (!drafts.length) return
+    drafts.forEach(saveDraft)
+    const reply = `Tudo salvo. Organizei ${drafts.length} movimento${drafts.length > 1 ? 's' : ''} e recalcularei sua bussola agora.`
+    speak(reply)
+    mutate((current) => ({
+      ...current,
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: reply,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+    setDrafts([])
+    setAiState('done')
   }
 
   function startVoice() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) {
-      setQuickText('Meu navegador não liberou voz aqui. Digite: vendi 3 serviços por 240 e gastei 35 com material')
+      setMode('command')
+      setAiState('listening')
+      setCommand('Recebi 240 de cliente e gastei 80 com material')
       return
     }
-
     const recognition = new SpeechRecognition()
     recognition.lang = 'pt-BR'
     recognition.interimResults = false
-    recognition.continuous = false
-    recognition.onstart = () => setIsListening(true)
-    recognition.onerror = () => setIsListening(false)
-    recognition.onend = () => setIsListening(false)
-    recognition.onresult = async (event) => {
-      setCaptureError('')
-      const transcript = Array.from(event.results)
-        .map((result) => result[0].transcript)
-        .join(' ')
-      const parsed = await parseEntry({ text: transcript, data, defaultScope }).catch((error) => {
-        setCaptureError(error.message || 'Nao consegui interpretar esse audio.')
-        return []
-      })
-      setQuickText(transcript)
-      setDrafts(parsed)
+    recognition.onstart = () => {
+      setListening(true)
+      setAiState('listening')
+    }
+    recognition.onend = () => {
+      setListening(false)
+      setAiState((current) => (current === 'listening' ? 'idle' : current))
+    }
+    recognition.onerror = () => {
+      setListening(false)
+      setAiState('idle')
+    }
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results).map((item) => item[0].transcript).join(' ')
+      setMode('command')
+      setCommand(transcript)
+      handleCommand(transcript)
     }
     recognitionRef.current = recognition
     recognition.start()
   }
 
-  function confirmDraft(draft) {
-    setData((current) => {
-      const transaction = { ...draft, id: createId(), source: 'confirmed' }
-      const nextCatalog = current.catalog.map((item) => {
-        const sameItem = normalizeText(item.name) === normalizeText(draft.itemName || draft.title)
-        if (!sameItem || item.stock === null) return item
-        if (draft.type === 'income' && draft.kind === 'sale') {
-          return { ...item, stock: Math.max(0, Number(item.stock) - Number(draft.quantity || 1)) }
-        }
-        if (draft.type === 'expense' && draft.kind === 'purchase') {
-          return { ...item, stock: Number(item.stock) + Number(draft.quantity || 1) }
-        }
-        return item
-      })
-      return {
-        ...current,
-        catalog: nextCatalog,
-        transactions: [transaction, ...current.transactions],
-      }
-    })
-    setDrafts((current) => current.filter((item) => item.id !== draft.id))
-  }
+  return (
+    <main className={`zero-app mode-${mode} theme-${theme}`}>
+      {mode !== 'command' && (
+        <aside className="app-sidebar">
+          <Brand sync={sync} />
+          <nav>
+            <button type="button" className={mode === 'home' ? 'active' : ''} onClick={() => setMode('home')}>
+              <Compass size={19} />
+              <span><strong>Inicio</strong><small>sua rota de hoje</small></span>
+            </button>
+            <button type="button" className={mode === 'wallet' ? 'active' : ''} onClick={() => setMode('wallet')}>
+              <WalletCards size={19} />
+              <span><strong>Carteira</strong><small>contas e cartoes</small></span>
+            </button>
+            <button type="button" className={mode === 'planning' ? 'active' : ''} onClick={() => setMode('planning')}>
+              <CalendarClock size={19} />
+              <span><strong>Planejar</strong><small>limites e compromissos</small></span>
+            </button>
+            <button type="button" className={mode === 'insights' ? 'active' : ''} onClick={() => setMode('insights')}>
+              <Activity size={19} />
+              <span><strong>Analises</strong><small>mes e movimentos</small></span>
+            </button>
+          </nav>
+          <button type="button" className="sidebar-ai" onClick={() => setMode('command')}>
+            <Sparkles size={20} />
+            <span><strong>Norte IA</strong><small>fale ou pergunte</small></span>
+          </button>
+        </aside>
+      )}
 
-  function confirmAllDrafts() {
-    const readyDrafts = drafts.filter((draft) => !draftNeedsReview(draft))
-    if (!readyDrafts.length) return
-    setData((current) => {
-      const transactionsToAdd = readyDrafts.map((draft) => ({ ...draft, id: createId(), source: 'confirmed' }))
-      const nextCatalog = current.catalog.map((item) => {
-        const itemDrafts = readyDrafts.filter((draft) => normalizeText(item.name) === normalizeText(draft.itemName || draft.title))
-        if (!itemDrafts.length || item.stock === null) return item
-        const movement = itemDrafts.reduce((acc, draft) => {
-          if (draft.type === 'income' && draft.kind === 'sale') return acc - Number(draft.quantity || 1)
-          if (draft.type === 'expense' && draft.kind === 'purchase') return acc + Number(draft.quantity || 1)
-          return acc
-        }, 0)
-        return { ...item, stock: Math.max(0, Number(item.stock || 0) + movement) }
-      })
-      return {
-        ...current,
-        catalog: nextCatalog,
-        transactions: [...transactionsToAdd, ...current.transactions],
-      }
-    })
-    setDrafts((current) => current.filter((draft) => draftNeedsReview(draft)))
-  }
+      <div className={mode !== 'command' ? 'app-workspace' : undefined}>
+      {mode !== 'command' && (
+        <header className="zero-top">
+          <Brand sync={sync} />
+          <button type="button" onClick={() => setMode('command')} className="zero-search">
+            <Brain size={17} />
+            <span>Pergunte ou registre qualquer coisa</span>
+          </button>
+          <div className="zero-user">
+            <button
+              type="button"
+              className="theme-toggle"
+              title={theme === 'dark' ? 'Usar tema claro' : 'Usar tema escuro'}
+              aria-label={theme === 'dark' ? 'Usar tema claro' : 'Usar tema escuro'}
+              onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+            >
+              {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
+            <Fingerprint size={16} />
+            <span>{state.person.name}</span>
+            {firebaseEnabled && authUser && <button type="button" onClick={logoutFirebase}><LogOut size={16} /></button>}
+          </div>
+        </header>
+      )}
 
-  function saveManual(event) {
-    event.preventDefault()
-    if (!manual.title || !manual.amount) return
-    const item = {
-      id: createId(),
-      type: manual.type,
-      scope: manual.scope,
-      kind: manual.type === 'income' ? 'sale' : 'expense',
-      title: manual.title,
-      category: manual.category,
-      amount: parseAmountInput(manual.amount),
-      date: manual.date || today(),
-      accountId: manual.accountId || getDefaultAccountId(data.accounts, manual.scope),
-      quantity: 1,
-      itemName: manual.title,
-      note: 'Lançado manualmente',
-      source: 'manual',
-    }
-    setData((current) => ({ ...current, transactions: [item, ...current.transactions] }))
-    setManual({ ...manual, title: '', amount: '', accountId: '', date: today() })
-  }
+      {mode !== 'command' && (
+        <Home
+          view={mode}
+          state={state}
+          finance={finance}
+          onCommand={() => setMode('command')}
+          onVoice={startVoice}
+          openSheet={setSheet}
+          settleObligation={settleObligation}
+        />
+      )}
 
-  function updateTransaction(id, patch) {
-    setData((current) => ({
-      ...current,
-      transactions: current.transactions.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    }))
-  }
+      {mode === 'command' && (
+        <Command
+          state={state}
+          finance={finance}
+          command={command}
+          setCommand={setCommand}
+          handleCommand={handleCommand}
+          drafts={drafts}
+          pendingDraft={pendingDraft}
+          aiState={aiState}
+          lastSaved={lastSaved}
+          confirmDraft={confirmDraft}
+          confirmAllDrafts={confirmAllDrafts}
+          updateDraft={updateDraft}
+          updateDraftDate={updateDraftDate}
+          dismissDraft={dismissDraft}
+          dismissPending={dismissPending}
+          listening={listening}
+          voiceEnabled={voiceEnabled}
+          toggleVoice={() => setVoiceEnabled((current) => !current)}
+          onVoice={startVoice}
+          onClose={() => setMode('home')}
+        />
+      )}
 
-  function deleteTransaction(id) {
-    setData((current) => ({
-      ...current,
-      transactions: current.transactions.filter((item) => item.id !== id),
-    }))
-  }
+      {mode !== 'command' && (
+        <nav className={`zero-dock ${dockCompact ? 'compact' : ''}`}>
+          <button type="button" className={mode === 'home' ? 'active' : ''} onClick={() => setMode('home')}>
+            <Compass size={20} />
+            <span>Inicio</span>
+          </button>
+          <button type="button" className={mode === 'wallet' ? 'active' : ''} onClick={() => setMode('wallet')}>
+            <WalletCards size={20} />
+            <span>Carteira</span>
+          </button>
+          <button type="button" className="orb" onClick={() => setMode('command')}>
+            <Sparkles size={24} />
+            <span>Norte</span>
+          </button>
+          <button type="button" className={mode === 'planning' ? 'active' : ''} onClick={() => setMode('planning')}>
+            <CalendarClock size={20} />
+            <span>Planejar</span>
+          </button>
+          <button type="button" className={mode === 'insights' ? 'active' : ''} onClick={() => setMode('insights')}>
+            <Activity size={20} />
+            <span>Analises</span>
+          </button>
+        </nav>
+      )}
 
-  function saveGoal(event) {
-    event.preventDefault()
-    if (!newGoal.title || !newGoal.target) return
-    setData((current) => ({
-      ...current,
-      goals: [
-        ...current.goals,
-        {
-          id: createId(),
-          title: newGoal.title,
-          target: parseAmountInput(newGoal.target),
-          current: 0,
-          due: newGoal.due || today(),
-          scope: defaultScope,
-        },
-      ],
-    }))
-    setNewGoal({ title: '', target: '', due: '' })
-  }
+      {sheet && (
+        <ActionSheet
+          sheet={sheet}
+          close={() => setSheet(null)}
+          state={state}
+          mutate={mutate}
+          addEvent={addEvent}
+          addObligation={addObligation}
+        />
+      )}
+      </div>
+    </main>
+  )
+}
 
-  function saveCatalogItem(event) {
-    event.preventDefault()
-    if (!newCatalogItem.name) return
-    setData((current) => ({
-      ...current,
-      catalog: [
-        ...current.catalog,
-        {
-          id: createId(),
-          name: newCatalogItem.name,
-          type: newCatalogItem.type,
-          price: parseAmountInput(newCatalogItem.price),
-          cost: parseAmountInput(newCatalogItem.cost),
-          stock: newCatalogItem.type === 'service' || newCatalogItem.type === 'project' ? null : parseAmountInput(newCatalogItem.stock),
-          minStock: newCatalogItem.type === 'service' || newCatalogItem.type === 'project' ? null : parseAmountInput(newCatalogItem.minStock),
-        },
-      ],
-    }))
-    setNewCatalogItem({ name: '', type: 'service', price: '', cost: '', stock: '', minStock: '' })
-  }
+function Brand({ sync }) {
+  const label = sync === 'ready' ? 'sincronizado' : sync === 'secure' ? 'seguro' : sync === 'demo' ? 'demo vivo' : sync === 'loading' ? 'entrando' : 'modo local'
+  return (
+    <div className="zero-brand">
+      <div><Compass size={20} /></div>
+      <span>
+        <strong>Norte</strong>
+        <small>{label}</small>
+      </span>
+    </div>
+  )
+}
 
-  function updateCatalogItem(id, patch) {
-    setData((current) => ({
-      ...current,
-      catalog: current.catalog.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    }))
-  }
+function Home({ view, state, finance, onCommand, onVoice, openSheet, settleObligation }) {
+  const nextDue = finance.upcoming[0]
+  const topGoal = state.goals[0]
+  const goalProgress = topGoal ? Math.min(100, Math.round((Number(topGoal.current || 0) / Number(topGoal.target || 1)) * 100)) : 0
+  const personalBalance = finance.byLedger.personal?.balance || 0
+  const businessBalance = finance.byLedger.business?.balance || 0
+  const ledgerTotal = Math.max(1, Math.abs(personalBalance) + Math.abs(businessBalance))
+  const personalShare = Math.round((Math.abs(personalBalance) / ledgerTotal) * 100)
+  const aiDecisions = state.assistant.filter((message) => message.role === 'norte').slice(0, 2)
+  const openAgenda = finance.upcoming.slice(0, 4).map((item) => ({ ...item, feedType: 'obligation' }))
+  const recentEvents = state.events.slice(0, 6)
+  const activePlan = getActivePlan(state.plan)
 
-  function deleteCatalogItem(id) {
-    setData((current) => ({
-      ...current,
-      catalog: current.catalog.filter((item) => item.id !== id),
-    }))
-  }
-
-  function contributeToGoal(goal) {
-    const amount = parseAmountInput(goalDrafts[goal.id])
-    if (!amount) return
-    setData((current) => ({
-      ...current,
-      goals: current.goals.map((item) =>
-        item.id === goal.id ? { ...item, current: Math.min(Number(item.target || 0), Number(item.current || 0) + amount) } : item,
-      ),
-      transactions: [
-        {
-          id: createId(),
-          type: 'transfer',
-          scope: goal.scope,
-          kind: 'goal',
-          title: `Aporte para ${goal.title}`,
-          category: 'Reserva',
-          amount,
-          date: today(),
-          accountId: getDefaultAccountId(current.accounts, goal.scope),
-          quantity: 1,
-          itemName: goal.title,
-          note: 'Aporte registrado na meta',
-          source: 'goal',
-        },
-        ...current.transactions,
-      ],
-    }))
-    setGoalDrafts((current) => ({ ...current, [goal.id]: '' }))
-  }
-
-  function saveAccount(event) {
-    event.preventDefault()
-    if (!newAccount.name) return
-    setData((current) => ({
-      ...current,
-      accounts: [
-        ...current.accounts,
-        {
-          id: createId(),
-          name: newAccount.name,
-          scope: newAccount.scope,
-          type: newAccount.type,
-          balance: parseAmountInput(newAccount.balance),
-        },
-      ],
-    }))
-    setNewAccount({ name: '', scope: 'business', type: 'cash', balance: '' })
-  }
-
-  function updateAccount(id, patch) {
-    setData((current) => ({
-      ...current,
-      accounts: current.accounts.map((account) => (account.id === id ? { ...account, ...patch } : account)),
-    }))
-  }
-
-  function deleteAccount(id) {
-    setData((current) => {
-      const isUsed = current.transactions.some((item) => item.accountId === id)
-      if (isUsed) {
-        window.alert('Essa conta tem lançamentos. Mova ou edite os lançamentos antes de excluir.')
-        return current
-      }
-      return {
-        ...current,
-        accounts: current.accounts.filter((account) => account.id !== id),
-      }
-    })
-  }
-
-  function saveClient(event) {
-    event.preventDefault()
-    if (!newClient.name) return
-    setData((current) => ({
-      ...current,
-      clients: [
-        ...current.clients,
-        {
-          id: createId(),
-          name: newClient.name,
-          phone: newClient.phone,
-          receivable: parseAmountInput(newClient.receivable),
-          due: newClient.due || today(),
-          status: parseAmountInput(newClient.receivable) > 0 ? 'pending' : 'active',
-          notes: newClient.notes,
-        },
-      ],
-    }))
-    setNewClient({ name: '', phone: '', receivable: '', due: '', notes: '' })
-  }
-
-  function receiveClient(client) {
-    setData((current) => ({
-      ...current,
-      clients: current.clients.map((item) =>
-        item.id === client.id ? { ...item, receivable: 0, status: 'paid' } : item,
-      ),
-      transactions: [
-        {
-          id: createId(),
-          type: 'income',
-          scope: 'business',
-          kind: 'receivable',
-          title: `Recebido de ${client.name}`,
-          category: 'Recebimento',
-          amount: Number(client.receivable || 0),
-          date: today(),
-          accountId: 'business-cash',
-          quantity: 1,
-          itemName: client.name,
-          note: 'Recebimento marcado em clientes',
-          source: 'client',
-        },
-        ...current.transactions,
-      ],
-    }))
-  }
-
-  function updateClient(id, patch) {
-    setData((current) => ({
-      ...current,
-      clients: current.clients.map((client) => (client.id === id ? { ...client, ...patch } : client)),
-    }))
-  }
-
-  function deleteClient(id) {
-    setData((current) => ({
-      ...current,
-      clients: current.clients.filter((client) => client.id !== id),
-    }))
-  }
-
-  function saveBill(event) {
-    event.preventDefault()
-    if (!newBill.title || !newBill.amount) return
-    setData((current) => ({
-      ...current,
-      bills: [
-        ...current.bills,
-        {
-          id: createId(),
-          title: newBill.title,
-          type: newBill.type,
-          scope: newBill.scope,
-          amount: parseAmountInput(newBill.amount),
-          due: newBill.due || today(),
-          status: 'open',
-          category: newBill.category,
-        },
-      ],
-    }))
-    setNewBill({ title: '', type: 'payable', scope: 'business', amount: '', due: '', category: 'Conta fixa' })
-  }
-
-  function payBill(bill) {
-    setData((current) => ({
-      ...current,
-      bills: current.bills.map((item) => (item.id === bill.id ? { ...item, status: 'paid', paidAt: today() } : item)),
-      transactions: [
-        {
-          id: createId(),
-          type: bill.type === 'receivable' ? 'income' : 'expense',
-          scope: bill.scope,
-          kind: bill.type,
-          title: bill.title,
-          category: bill.category,
-          amount: Number(bill.amount || 0),
-          date: today(),
-          accountId: getDefaultAccountId(current.accounts, bill.scope),
-          quantity: 1,
-          itemName: bill.title,
-          note: bill.type === 'receivable' ? 'Conta recebida' : 'Conta paga',
-          source: 'bill',
-        },
-        ...current.transactions,
-      ],
-    }))
-  }
-
-  function deleteBill(id) {
-    setData((current) => ({
-      ...current,
-      bills: current.bills.filter((bill) => bill.id !== id),
-    }))
-  }
-
-  function updateBill(id, patch) {
-    setData((current) => ({
-      ...current,
-      bills: current.bills.map((bill) => (bill.id === id ? { ...bill, ...patch } : bill)),
-    }))
-  }
-
-  async function saveSale(event) {
-    event.preventDefault()
-    const item = data.catalog.find((catalogItem) => catalogItem.id === newSale.itemId) || data.catalog[0]
-    const quantity = parseAmountInput(newSale.quantity || 1)
-    const unitPrice = parseAmountInput(newSale.unitPrice || item?.price || 0)
-    const total = quantity * unitPrice
-    if (!newSale.clientName || !item || !total) return
-    if (item.stock !== null && Number(item.stock || 0) < quantity) {
-      const confirmed = window.confirm('O estoque atual e menor que a quantidade vendida. Salvar mesmo assim e zerar o estoque?')
-      if (!confirmed) return
-    }
-    const nextState = await createSaleOperation({ data, sale: newSale }).catch((error) => {
-      window.alert(`Não consegui salvar a venda: ${error.message}`)
-      return null
-    })
-    if (!nextState) return
-    setData(migrateData(nextState))
-
-    setNewSale({
-      clientName: '',
-      itemId: item.id,
-      quantity: '1',
-      unitPrice: item.price || '',
-      status: 'paid',
-      date: today(),
-      due: today(),
-      notes: '',
-    })
-  }
-
-  async function deleteSale(id) {
-    const confirmed = window.confirm('Cancelar esta venda e desfazer financeiro, estoque e contas vinculadas?')
-    if (!confirmed) return
-    const nextState = await cancelSaleService({ data, saleId: id }).catch((error) => {
-      window.alert(`Não consegui cancelar a venda: ${error.message}`)
-      return null
-    })
-    if (nextState) setData(migrateData(nextState))
-  }
-
-  async function savePurchase(event) {
-    event.preventDefault()
-    const item = data.catalog.find((catalogItem) => catalogItem.id === newPurchase.itemId) || data.catalog[0]
-    const quantity = parseAmountInput(newPurchase.quantity || 1)
-    const unitCost = parseAmountInput(newPurchase.unitCost || item?.cost || 0)
-    const total = quantity * unitCost
-    if (!newPurchase.supplierName || !item || !total) return
-    const nextState = await createPurchaseOperation({ data, purchase: newPurchase }).catch((error) => {
-      window.alert(`Não consegui salvar a compra: ${error.message}`)
-      return null
-    })
-    if (!nextState) return
-    setData(migrateData(nextState))
-
-    setNewPurchase({
-      supplierName: '',
-      itemId: item.id,
-      quantity: '1',
-      unitCost: unitCost || '',
-      status: 'paid',
-      date: today(),
-      due: today(),
-      notes: '',
-    })
-  }
-
-  async function deletePurchase(id) {
-    const confirmed = window.confirm('Cancelar esta compra e desfazer financeiro, estoque e contas vinculadas?')
-    if (!confirmed) return
-    const nextState = await cancelPurchaseService({ data, purchaseId: id }).catch((error) => {
-      window.alert(`Não consegui cancelar a compra: ${error.message}`)
-      return null
-    })
-    if (nextState) setData(migrateData(nextState))
-  }
-
-  function exportBackup() {
-    const payload = JSON.stringify(data, null, 2)
-    const blob = new Blob([payload], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `norte-backup-${today()}.json`
-    link.click()
-    URL.revokeObjectURL(url)
-  }
-
-  function importBackup(event) {
-    const file = event.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      try {
-        setData(migrateData(JSON.parse(reader.result)))
-      } catch {
-        window.alert('Nao consegui importar esse arquivo.')
-      }
-    }
-    reader.readAsText(file)
-  }
-
-  function resetAppData() {
-    const confirmed = window.confirm('Isso reinicia os dados salvos na API local. Continuar?')
-    if (confirmed) {
-      setData(starterData)
-    }
-  }
-
-  if (firebaseEnabled && authReady && !firebaseUser) {
-    return <AuthScreen />
-  }
-
-  if (!data) {
-    return (
-      <main className="loading-screen">
-        <Brand />
-        <p>{firebaseEnabled && !authReady ? 'Conectando ao Firebase...' : 'Carregando seu app financeiro...'}</p>
-      </main>
-    )
-  }
-
-  if (!data.onboarded) {
-    return <Onboarding onComplete={completeOnboarding} />
+  function runAction(action) {
+    if (action === 'settle-first' && finance.upcoming[0]) settleObligation(finance.upcoming[0].id)
+    if (action === 'connect') openSheet('connect')
+    if (action === 'recurrence') openSheet('recurrence')
+    if (action === 'card') openSheet({ type: 'card', id: state.cards.find((card) => card.used > 0)?.id || state.cards[0]?.id })
+    if (action === 'goal') openSheet('goal')
+    if (action === 'command') onCommand()
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <Brand />
-        <nav className="nav-list" aria-label="Navegação principal">
-          {navItems.map((item) => {
-            const Icon = item.icon
+    <section className={`zero-home view-${view}`}>
+      {view !== 'home' && (
+        <header className="view-intro">
+          <span>{view === 'wallet' ? 'seu dinheiro' : view === 'planning' ? 'seu proximo passo' : 'sua leitura'}</span>
+          <h1>{view === 'wallet' ? 'Carteira' : view === 'planning' ? 'Planejamento' : 'Analises'}</h1>
+          <p>
+            {view === 'wallet'
+              ? 'Contas, cartoes e a separacao entre pessoal e negocio.'
+              : view === 'planning'
+                ? 'Limites, metas e compromissos antes que virem surpresa.'
+                : 'Entenda o mes e encontre para onde seu dinheiro esta indo.'}
+          </p>
+        </header>
+      )}
+      <section className="money-hero">
+        <div className="hero-copy">
+          <p>seu dinheiro agora</p>
+          <h1>{brl(finance.totalBalance)}</h1>
+          <span>{finance.status}. pessoal e negocio separados por IA.</span>
+        </div>
+        <div className="card-stack">
+          {state.cards.map((card, index) => (
+            <button
+              className={`live-card tone-${card.tone}`}
+              type="button"
+              key={card.id}
+              style={{ '--i': index }}
+              onClick={() => openSheet({ type: 'card', id: card.id })}
+            >
+              <span>{card.issuer || 'Norte'} - final {card.last4 || '0000'}</span>
+              <strong>{card.name}</strong>
+              <small>{brl(card.limit - card.used)} livre</small>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="wallet-rail">
+        <div className="section-head">
+          <h3>Carteira viva</h3>
+          <button type="button" onClick={() => openSheet('connect')}>conectar banco</button>
+        </div>
+        <div className="wallet-grid">
+          {state.accounts.slice(0, 4).map((account, index) => (
+            <button
+              className={`bank-tile tone-${account.ledger === 'business' ? 'electric' : index % 2 ? 'pulse' : 'aurora'}`}
+              type="button"
+              key={account.id}
+              onClick={() => openSheet({ type: 'account', id: account.id })}
+            >
+              <Landmark size={20} />
+              <span>{account.ledger === 'business' ? 'negocio' : 'pessoal'} - {account.connected ? 'conectada' : account.kind}</span>
+              <strong>{account.name}</strong>
+              <b>{brl(account.balance)}</b>
+              <small>{account.connected ? 'Open Finance pronto para sincronizar' : 'saldo controlado pelo Norte'}</small>
+            </button>
+          ))}
+          {!state.accounts.length && (
+            <article className="bank-empty">
+              <ShieldCheck />
+              <strong>Conecte bancos quando estiver pronto.</strong>
+              <span>Hoje simulamos a experiencia. A arquitetura ja separa pessoal e negocio para Open Finance depois.</span>
+            </article>
+          )}
+          <button className="plan-tile" type="button" onClick={() => openSheet('plans')}>
+            <LockKeyhole size={20} />
+            <span>Plano atual</span>
+            <strong>{activePlan.name}</strong>
+            <small>{state.plan.status === 'trial' ? `${state.plan.trialDays} dias para validar valor` : activePlan.headline}</small>
+          </button>
+        </div>
+        <div className="wallet-cards-row">
+          {state.cards.map((card) => {
+            const health = getCardHealth(card)
             return (
-              <button
-                key={item.id}
-                className={`nav-button ${activePrimary === item.id ? 'active' : ''}`}
-                type="button"
-                onClick={() => setActive(item.id)}
-                title={item.label}
-              >
-                <Icon size={20} />
-                <span>{item.label}</span>
+              <button className={`wallet-card-mini tone-${card.tone} card-${health.tone}`} type="button" key={card.id} onClick={() => openSheet({ type: 'card', id: card.id })}>
+                <span>{card.issuer || 'Norte'} - final {card.last4 || '0000'}</span>
+                <strong>{card.name}</strong>
+                <small>{brl(health.used)} na fatura - vence em {health.daysToDue} dia{health.daysToDue === 1 ? '' : 's'}</small>
+                <div className="card-mini-meta">
+                  <b>{brl(health.free)} livre</b>
+                  <em>{health.usedPercent}% usado</em>
+                </div>
+                <div className="limit-meter"><i style={{ width: `${Math.min(100, health.usedPercent)}%` }} /></div>
               </button>
             )
           })}
-        </nav>
-      </aside>
+          <button className="wallet-card-mini new-card" type="button" onClick={() => openSheet('new-card')}>
+            <Plus size={18} />
+            <strong>Novo cartao</strong>
+            <small>adicione pessoal ou negocio</small>
+          </button>
+        </div>
+      </section>
 
-      <main className="main">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">{profile.label}</p>
-            <h1>{data.user.businessName}</h1>
-          </div>
-          <div className="topbar-actions">
-            <div className="tenant-chip" title={activeWorkspaceId}>
-              <span>{firebaseEnabled ? 'Conta autenticada' : 'Modo local'}</span>
-              <strong>{firebaseUser?.email || 'Sem Firebase'}</strong>
-              <small>{activeWorkspaceId}</small>
-            </div>
-            <span className={`data-status ${dataStatus}`}>
-              {firebaseEnabled ? (dataStatus === 'ready' ? 'Salvando no Firebase' : 'Firebase offline') : dataStatus === 'ready' ? 'Salvando na API' : 'API offline'}
-            </span>
-            {firebaseEnabled && (
-              <button className="secondary-action" type="button" onClick={logoutFirebase}>
-                Sair
-              </button>
-            )}
-            <div className="scope-toggle" aria-label="Escopo padrão">
-              <button className={defaultScope === 'business' ? 'selected' : ''} type="button" onClick={() => setDefaultScope('business')}>
-                Negócio
-              </button>
-              <button className={defaultScope === 'personal' ? 'selected' : ''} type="button" onClick={() => setDefaultScope('personal')}>
-                Pessoal
-              </button>
-            </div>
-          </div>
-        </header>
-
-        {active === 'home' && (
-          <TodayView
-            user={data.user}
-            totals={totals}
-            transactions={transactions}
-            accountBalances={accountBalances}
-            lowStock={lowStock}
-            goals={data.goals}
-            bills={data.bills}
-            clients={data.clients}
-            onGoLaunch={() => setActive('register')}
-            onNavigate={navigateTo}
-          />
-        )}
-
-        {active === 'register' && (
-          <LaunchView
-            quickText={quickText}
-            setQuickText={setQuickText}
-            parseQuickText={parseQuickText}
-            startVoice={startVoice}
-            isListening={isListening}
-            drafts={drafts}
-            setDrafts={setDrafts}
-            confirmDraft={confirmDraft}
-            confirmAllDrafts={confirmAllDrafts}
-            captureError={captureError}
-            manual={manual}
-            setManual={setManual}
-            saveManual={saveManual}
-            accounts={data.accounts}
-            transactions={transactions}
-            updateTransaction={updateTransaction}
-            deleteTransaction={deleteTransaction}
-          />
-        )}
-
-        {active === 'movements' && (
-          <MovementsView
-            data={data}
-            totals={totals}
-            accountBalances={accountBalances}
-            transactions={transactions}
-            accounts={data.accounts}
-            onUpdate={updateTransaction}
-            onDelete={deleteTransaction}
-            onNavigate={setActive}
-          />
-        )}
-
-        {active === 'pay' && (
-          <PayReceiveView
-            totals={totals}
-            bills={data.bills}
-            clients={data.clients}
-            onNavigate={setActive}
-          />
-        )}
-
-        {active === 'account' && (
-          <SettingsView data={data} exportBackup={exportBackup} importBackup={importBackup} resetAppData={resetAppData} />
-        )}
-
-        {active === 'assistant' && (
-          <AssistantView totals={totals} accountBalances={accountBalances} lowStock={lowStock} />
-        )}
-
-        {active === 'sales' && (
-          <SalesView
-            sales={data.sales || []}
-            clients={data.clients}
-            catalog={data.catalog}
-            newSale={newSale}
-            setNewSale={setNewSale}
-            saveSale={saveSale}
-            deleteSale={deleteSale}
-          />
-        )}
-
-        {active === 'purchases' && (
-          <PurchasesView
-            purchases={data.purchases || []}
-            suppliers={data.suppliers || []}
-            catalog={data.catalog}
-            newPurchase={newPurchase}
-            setNewPurchase={setNewPurchase}
-            savePurchase={savePurchase}
-            deletePurchase={deletePurchase}
-          />
-        )}
-
-        {active === 'business' && (
-          <BusinessView
-            data={data}
-            profile={profile}
-            totals={totals}
-            lowStock={lowStock}
-            newCatalogItem={newCatalogItem}
-            setNewCatalogItem={setNewCatalogItem}
-            saveCatalogItem={saveCatalogItem}
-            updateCatalogItem={updateCatalogItem}
-            deleteCatalogItem={deleteCatalogItem}
-          />
-        )}
-
-        {active === 'clients' && (
-          <ClientsView
-            clients={data.clients}
-            newClient={newClient}
-            setNewClient={setNewClient}
-            saveClient={saveClient}
-            receiveClient={receiveClient}
-            updateClient={updateClient}
-            deleteClient={deleteClient}
-          />
-        )}
-
-        {active === 'bills' && (
-          <BillsView
-            bills={data.bills}
-            totals={totals}
-            newBill={newBill}
-            setNewBill={setNewBill}
-            saveBill={saveBill}
-            payBill={payBill}
-            deleteBill={deleteBill}
-            updateBill={updateBill}
-          />
-        )}
-
-        {active === 'personal' && (
-          <PersonalView
-            totals={totals}
-            accountBalances={accountBalances}
-            transactions={transactions}
-            newAccount={newAccount}
-            setNewAccount={setNewAccount}
-            saveAccount={saveAccount}
-            updateAccount={updateAccount}
-            deleteAccount={deleteAccount}
-            onDelete={deleteTransaction}
-            onUpdate={updateTransaction}
-            accounts={data.accounts}
-          />
-        )}
-
-        {active === 'reports' && (
-          <ReportsView
-            data={data}
-            totals={totals}
-            accountBalances={accountBalances}
-            lowStock={lowStock}
-          />
-        )}
-
-        {active === 'goals' && (
-          <GoalsView
-            goals={data.goals}
-            newGoal={newGoal}
-            setNewGoal={setNewGoal}
-            saveGoal={saveGoal}
-            goalDrafts={goalDrafts}
-            setGoalDrafts={setGoalDrafts}
-            contributeToGoal={contributeToGoal}
-          />
-        )}
-
-        {active === 'settings' && (
-          <SettingsView data={data} exportBackup={exportBackup} importBackup={importBackup} resetAppData={resetAppData} />
-        )}
-      </main>
-
-      <nav className="mobile-nav" aria-label="Navegação inferior">
-        {navItems.map((item) => {
-          const Icon = item.icon
+      <section className="insight-strip">
+        {finance.insights.map((insight) => {
+          const Icon = insight.icon
           return (
-            <button key={item.id} className={activePrimary === item.id ? 'active' : ''} type="button" onClick={() => setActive(item.id)}>
-              <Icon size={20} />
-              <span>{item.label}</span>
-            </button>
-          )
-        })}
-      </nav>
-    </div>
-  )
-}
-
-function Brand() {
-  return (
-    <div className="brand">
-      <div className="brand-mark">
-        <Sparkles size={20} />
-      </div>
-      <div>
-        <strong>Norte</strong>
-        <span>finanças claras</span>
-      </div>
-    </div>
-  )
-}
-
-// eslint-disable-next-line no-unused-vars
-function FirebaseRequiredScreen() {
-  return (
-    <main className="auth-screen">
-      <section className="welcome-band">
-        <Brand />
-        <div className="welcome-copy">
-          <p className="eyebrow">Configuração obrigatória</p>
-          <h1>O Norte precisa do Firebase para rodar em produção.</h1>
-          <p>Configure as variáveis `VITE_FIREBASE_*` no Vercel para ativar login, tenant e banco real por usuário.</p>
-        </div>
-      </section>
-      <section className="auth-panel">
-        <div>
-          <p className="eyebrow">SaaS protegido</p>
-          <h2>Sem Firebase, sem dados reais.</h2>
-        </div>
-        <p className="form-error">
-          Esta tela bloqueia produção sem autenticação para evitar que usuários compartilhem dados em modo local.
-        </p>
-      </section>
-    </main>
-  )
-}
-
-function AuthScreen() {
-  const [mode, setMode] = useState('register')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  async function submit(event) {
-    event.preventDefault()
-    setError('')
-    setNotice('')
-    setLoading(true)
-    try {
-      if (!firebaseEnabled) {
-        throw new Error('auth/unavailable')
-      }
-      if (mode === 'login') {
-        await loginWithEmail(email, password)
-      } else {
-        await registerWithEmail(email, password)
-      }
-    } catch (authError) {
-      setError(authErrorMessage(authError))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function resetPassword() {
-    setError('')
-    setNotice('')
-    if (!email) {
-      setError('Digite seu email para receber o link de recuperação.')
-      return
-    }
-    setLoading(true)
-    try {
-      await resetFirebasePassword(email)
-      setNotice('Enviamos um link de recuperação para seu email.')
-    } catch (authError) {
-      setError(authErrorMessage(authError))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <main className="auth-screen">
-      <section className="welcome-band">
-        <Brand />
-        <div className="welcome-copy">
-          <p className="eyebrow">Conta Norte</p>
-          <h1>Entre para acessar suas finanças com segurança.</h1>
-          <p>Seus dados ficam separados por usuário no Firebase Authentication e Firestore.</p>
-        </div>
-      </section>
-      <form className="auth-panel" onSubmit={submit}>
-        <div>
-          <p className="eyebrow">{mode === 'login' ? 'Entrar' : 'Criar conta'}</p>
-          <h2>{mode === 'login' ? 'Acesse sua conta' : 'Comece pelo cadastro'}</h2>
-        </div>
-        <div className="auth-benefits">
-          <span>Norte Beta liberado</span>
-          <span>Dados por usuario</span>
-          <span>Sem cobranca agora</span>
-        </div>
-        <div className="segmented auth-tabs" aria-label="Cadastro ou entrada">
-          <button className={mode === 'register' ? 'selected' : ''} type="button" onClick={() => setMode('register')}>
-            Cadastro
-          </button>
-          <button className={mode === 'login' ? 'selected' : ''} type="button" onClick={() => setMode('login')}>
-            Entrar
-          </button>
-        </div>
-        <label>
-          Email
-          <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" required />
-        </label>
-        <label>
-          Senha
-          <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required />
-        </label>
-        {error && <p className="form-error">{error}</p>}
-        {notice && <p className="form-success">{notice}</p>}
-        <button className="primary-action" type="submit" disabled={loading}>
-          <Check size={18} />
-          {loading ? 'Aguarde...' : mode === 'login' ? 'Entrar' : 'Criar conta e continuar'}
-        </button>
-        {mode === 'login' && (
-          <button className="text-action" type="button" onClick={resetPassword} disabled={loading}>
-            Esqueci minha senha
-          </button>
-        )}
-        <button className="text-action" type="button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
-          {mode === 'login' ? 'Criar uma nova conta' : 'Já tenho conta'}
-        </button>
-      </form>
-    </main>
-  )
-}
-
-function Onboarding({ onComplete }) {
-  const [selected, setSelected] = useState('services')
-  const selectedProfile = profileOptions.find((profile) => profile.id === selected) || profileOptions[0]
-
-  return (
-    <main className="onboarding">
-      <section className="welcome-band">
-        <Brand />
-        <div className="welcome-copy">
-          <p className="eyebrow">Norte financeiro</p>
-          <h1>Fale o que aconteceu. O app organiza dinheiro, negócio e metas.</h1>
-          <p>
-            Controle pessoal, negócio, registro inteligente, produtos, serviços, clientes, contas e decisões do dia em um só lugar.
-          </p>
-        </div>
-      </section>
-
-      <form className="setup-panel" onSubmit={onComplete}>
-        <div className="setup-heading">
-          <p className="eyebrow">Passo 1 de 3</p>
-          <h2>Vamos preparar sua rotina financeira</h2>
-          <span>Voce pode alterar tudo depois em Ajustes.</span>
-        </div>
-
-        <div className="form-grid two">
-          <label>
-            Seu nome
-            <input name="name" placeholder="Ex: Ana" />
-          </label>
-          <label>
-            Nome do negócio
-            <input name="businessName" placeholder="Ex: Studio Ana" />
-          </label>
-        </div>
-
-        <div className="form-grid two">
-          <label>
-            Caixa inicial do negócio
-            <input name="businessBalance" placeholder="0,00" inputMode="decimal" />
-          </label>
-          <label>
-            Dinheiro pessoal inicial
-            <input name="personalBalance" placeholder="0,00" inputMode="decimal" />
-          </label>
-        </div>
-
-        <fieldset>
-          <legend>Operação inicial</legend>
-          <div className="segmented wide stock-choice">
-            <label className="radio-segment">
-              <input type="radio" name="controlsStock" value="yes" defaultChecked />
-              Controlo estoque
-            </label>
-            <label className="radio-segment">
-              <input type="radio" name="controlsStock" value="no" />
-              Não controlo estoque
-            </label>
-          </div>
-        </fieldset>
-
-        <div className="form-grid two">
-          <label>
-            Primeira meta
-            <input name="goalTitle" placeholder="Ex: Reserva do negócio" />
-          </label>
-          <label>
-            Valor da meta
-            <input name="goalTarget" placeholder="3000" inputMode="decimal" />
-          </label>
-        </div>
-
-        <fieldset>
-          <legend>Como você ganha dinheiro?</legend>
-          <div className="profile-grid">
-            {profileOptions.map((profile) => (
-              <label key={profile.id} className={`profile-card ${selected === profile.id ? 'selected' : ''}`}>
-                <input
-                  type="radio"
-                  name="profile"
-                  value={profile.id}
-                  checked={selected === profile.id}
-                  onChange={() => setSelected(profile.id)}
-                />
-                <span className="profile-title">{profile.label}</span>
-                <span>{profile.example}</span>
-                <small>{profile.focus.join(' • ')}</small>
-              </label>
-            ))}
-          </div>
-        </fieldset>
-
-        <section className="profile-preview">
-          <div>
-            <p className="eyebrow">O Norte vai priorizar</p>
-            <h3>{selectedProfile.label}</h3>
-          </div>
-          <div className="preview-list">
-            {selectedProfile.focus.map((item) => (
-              <span key={item}>
-                <Check size={15} />
-                {item}
-              </span>
-            ))}
-          </div>
-        </section>
-
-        <button className="primary-action" type="submit">
-          <Check size={18} />
-          Entrar no app
-        </button>
-      </form>
-    </main>
-  )
-}
-
-function TodayView({ user, totals, transactions, accountBalances, lowStock, goals, bills, clients, onGoLaunch, onNavigate }) {
-  const profit = totals.todayIncome - totals.todayExpense
-  const nextGoal = goals[0]
-  const businessBalance = getBusinessBalance(accountBalances)
-  const personalBalance = getPersonalBalance(accountBalances)
-  const totalBalance = businessBalance + personalBalance
-  const todayDate = today()
-  const openBills = bills.filter((bill) => bill.status !== 'paid')
-  const overdueBills = openBills.filter((bill) => bill.due < todayDate)
-  const dueTodayBills = openBills.filter((bill) => bill.due === todayDate)
-  const pendingClients = clients.filter((client) => Number(client.receivable || 0) > 0)
-  const openReceivables = totals.billsReceivable + totals.receivable
-  const openPayables = totals.billsPayable
-  const hasStarted = transactions.length > 0 || goals.length > 0 || bills.length > 0 || clients.length > 0
-  const activationSteps = [
-    { label: 'Criar primeiro lancamento', done: transactions.length > 0, target: 'register' },
-    { label: 'Definir uma meta', done: goals.length > 0, target: 'goals' },
-    { label: 'Cadastrar conta ou recebimento', done: bills.length > 0 || clients.length > 0, target: 'pay' },
-  ]
-  const attentionCount = overdueBills.length + dueTodayBills.length + lowStock.length + pendingClients.length
-  const balanceMessage = totalBalance >= 0
-    ? 'Seu dinheiro esta organizado entre pessoal e negocio.'
-    : 'Seu saldo total esta negativo. Priorize entradas e reduza saidas.'
-  const cashMessage = openReceivables >= openPayables
-    ? `Voce tem ${money(openReceivables)} para receber contra ${money(openPayables)} a pagar.`
-    : `Atencao: ha ${money(openPayables)} a pagar e ${money(openReceivables)} previsto para receber.`
-  const priorities = [
-    ...overdueBills.slice(0, 2).map((bill) => ({
-      tone: 'danger',
-      title: `${bill.type === 'payable' ? 'Pagar vencido' : 'Receber vencido'}: ${bill.title}`,
-      detail: `${money(bill.amount)} venceu em ${new Date(`${bill.due}T12:00:00`).toLocaleDateString('pt-BR')}`,
-      action: 'Contas',
-      target: 'pay',
-    })),
-    ...dueTodayBills.slice(0, 2).map((bill) => ({
-      tone: 'warning',
-      title: `${bill.type === 'payable' ? 'Pagar hoje' : 'Receber hoje'}: ${bill.title}`,
-      detail: `${money(bill.amount)} vence hoje`,
-      action: 'Contas',
-      target: 'pay',
-    })),
-    ...lowStock.slice(0, 2).map((item) => ({
-      tone: 'warning',
-      title: `${item.name} em estoque baixo`,
-      detail: `Atual: ${number(item.stock)} • mínimo: ${number(item.minStock)}`,
-      action: 'Comprar',
-      target: 'purchases',
-    })),
-    ...pendingClients.slice(0, 2).map((client) => ({
-      tone: 'info',
-      title: `${client.name} tem valor em aberto`,
-      detail: `${money(client.receivable)} para receber`,
-      action: 'Clientes',
-      target: 'pay',
-    })),
-  ].slice(0, 5)
-  const quickActions = [
-    { label: 'Registrar', helper: 'voz ou texto', icon: Plus, action: onGoLaunch },
-    { label: 'Falar agora', helper: 'lancamento rapido', icon: Mic, action: onGoLaunch },
-    { label: 'Pagar/receber', helper: `${overdueBills.length} vencidas`, icon: Bell, action: () => onNavigate('pay') },
-    { label: 'Movimentos', helper: 'historico completo', icon: ReceiptText, action: () => onNavigate('movements') },
-  ]
-  const dailySummary = `Resumo de hoje: entrou ${money(totals.todayIncome)}, saiu ${money(totals.todayExpense)} e o resultado estimado foi ${money(profit)}. Saldo total: ${money(totalBalance)}.`
-
-  function copySummary() {
-    navigator.clipboard?.writeText(dailySummary)
-  }
-
-  return (
-    <section className="screen">
-      <section className="home-hero">
-        <div className="home-balance">
-          <div className="home-greeting">
-            <p className="eyebrow">Inicio</p>
-            <span>{user?.businessName || 'Seu Norte financeiro'}</span>
-          </div>
-          <span className="balance-label">Saldo total</span>
-          <strong className="balance-value">{money(totalBalance)}</strong>
-          <p>{balanceMessage}</p>
-          <div className="balance-split">
-            <span>
-              <Wallet size={16} />
-              Pessoal {money(personalBalance)}
-            </span>
-            <span>
-              <Store size={16} />
-              Negocio {money(businessBalance)}
-            </span>
-          </div>
-        </div>
-        <div className="home-status-card">
-          <div>
-            <p className="eyebrow">Agora</p>
-            <h2>{attentionCount ? `${attentionCount} ponto${attentionCount > 1 ? 's' : ''} para olhar` : 'Tudo calmo por aqui'}</h2>
-            <p>
-              {cashMessage} Resultado de hoje: <strong>{money(profit)}</strong>.
-            </p>
-          </div>
-          <div className="home-status-actions">
-            <button className="primary-action" type="button" onClick={onGoLaunch}>
-              <Mic size={18} />
-              Falar lancamento
-            </button>
-            <button className="secondary-action" type="button" onClick={copySummary}>
-              <FileText size={18} />
-              Copiar resumo
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section className="quick-action-grid" aria-label="Acoes rapidas">
-        {quickActions.map((action) => {
-          const Icon = action.icon
-          return (
-            <button key={action.label} type="button" onClick={action.action}>
-              <Icon size={21} />
-              <strong>{action.label}</strong>
-              <span>{action.helper}</span>
-            </button>
+            <article key={insight.id}>
+              <Icon size={18} />
+              <span>{insight.label}</span>
+              <strong>{insight.value}</strong>
+              <small>{insight.text}</small>
+            </article>
           )
         })}
       </section>
 
-      {!hasStarted && (
-        <section className="activation-panel">
-          <div>
-            <p className="eyebrow">Primeiros 2 minutos</p>
-            <h3>Comece pelo que aconteceu hoje.</h3>
-            <p>O Norte fica inteligente quando voce registra entradas, saidas, contas e metas. Nao precisa configurar tudo antes.</p>
+      <section className="pulse-board">
+        <div className="section-head">
+          <h3>Radar Norte</h3>
+          <button type="button" onClick={onCommand}>pedir leitura</button>
+        </div>
+        <div className="pulse-grid">
+          <article className="pulse-card pulse-primary">
+            <Activity size={19} />
+            <span>Dinheiro livre</span>
+            <strong>{brl(finance.safeToSpend)}</strong>
+            <small>{finance.safeToSpend > 0 ? 'pode respirar hoje sem perder a rota' : 'modo cuidado: segure novas saidas'}</small>
+          </article>
+          <article className="pulse-card">
+            <BellRing size={19} />
+            <span>Proximo compromisso</span>
+            <strong>{nextDue ? brl(nextDue.amount) : 'limpo'}</strong>
+            <small>{nextDue ? `${nextDue.title} vence ${dateLabel(nextDue.due)}` : 'nenhuma conta aberta na frente'}</small>
+            {nextDue && <button type="button" onClick={() => settleObligation(nextDue.id)}>{nextDue.type === 'receivable' ? 'recebi' : 'paguei'}</button>}
+          </article>
+          <article className="pulse-card">
+            <Target size={19} />
+            <span>Meta em foco</span>
+            <strong>{topGoal ? `${goalProgress}%` : 'criar meta'}</strong>
+            <small>{topGoal ? `${topGoal.title}: ${brl(topGoal.current || 0)} de ${brl(topGoal.target)}` : 'defina um destino para a bussola'}</small>
+            <button type="button" onClick={() => (topGoal ? openSheet({ type: 'goal-fund', id: topGoal.id }) : openSheet('goal'))}>
+              {topGoal ? 'guardar' : 'nova meta'}
+            </button>
+          </article>
+          <article className="pulse-card ledger-mix">
+            <WalletCards size={19} />
+            <span>Separacao viva</span>
+            <strong>{personalShare}% / {100 - personalShare}%</strong>
+            <small>pessoal e negocio em carteiras separadas</small>
+            <div>
+              <span style={{ width: `${personalShare}%` }} />
+              <span style={{ width: `${100 - personalShare}%` }} />
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section className="planning-goals">
+        <div className="section-head">
+          <h3>Metas em movimento</h3>
+          <button type="button" onClick={() => openSheet('goal')}>nova meta</button>
+        </div>
+        <div className="goal-row">
+          {state.goals.slice(0, 4).map((goal) => (
+            <article key={goal.id}>
+              <Target size={18} />
+              <span>{goal.title}</span>
+              <strong>{brl(goal.current || 0)} / {brl(goal.target)}</strong>
+              <button type="button" onClick={() => openSheet({ type: 'goal-fund', id: goal.id })}>guardar</button>
+            </article>
+          ))}
+          {!state.goals.length && (
+            <div className="empty-feed">
+              <Target />
+              <span>Crie uma meta para dar um destino claro ao dinheiro que sobrar.</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {!!finance.alerts.length && (
+        <section className="smart-alerts">
+          <div className="section-head">
+            <h3>Alertas inteligentes</h3>
+            <button type="button" onClick={onCommand}>conversar</button>
           </div>
-          <div className="activation-steps">
-            {activationSteps.map((step) => (
-              <button key={step.label} className={step.done ? 'done' : ''} type="button" onClick={() => onNavigate(step.target)}>
-                <Check size={17} />
-                {step.label}
+          <div className="alert-row">
+            {finance.alerts.map((alert) => (
+              <button type="button" className={`smart-alert ${alert.tone}`} key={alert.id} onClick={() => runAction(alert.action)}>
+                <BellRing size={17} />
+                <span>{alert.title}</span>
+                <strong>{alert.text}</strong>
               </button>
             ))}
           </div>
         </section>
       )}
 
-      <div className="home-metrics">
-        <Metric title="Entrou hoje" value={money(totals.todayIncome)} icon={ArrowUpRight} tone="green" />
-        <Metric title="Saiu hoje" value={money(totals.todayExpense)} icon={ArrowDownRight} tone="red" />
-        <Metric title="Resultado" value={money(profit)} icon={TrendingUp} tone={profit >= 0 ? 'green' : 'red'} />
-        <Metric title="A receber" value={money(openReceivables)} icon={Users} tone="amber" />
-      </div>
-
-      <div className="home-content-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Precisa de atenção</h3>
-            <AlertCircle size={18} />
-          </div>
-          <div className="priority-list">
-            {priorities.length ? (
-              priorities.map((item) => (
-                <article className={`priority-item ${item.tone}`} key={`${item.title}-${item.detail}`}>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <span>{item.detail}</span>
-                  </div>
-                  <button className="mini-action" type="button" onClick={() => onNavigate(item.target)}>
-                    {item.action}
-                  </button>
-                </article>
-              ))
-            ) : (
-              <p className="empty-state">Nada urgente agora. Continue registrando os movimentos do dia.</p>
-            )}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Próxima ação</h3>
-            <Sparkles size={18} />
-          </div>
-          <ActionInsight lowStock={lowStock} totals={totals} nextGoal={nextGoal} />
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Últimos movimentos</h3>
-            <ReceiptText size={18} />
-          </div>
-          <TransactionList items={transactions.slice(0, 5)} compact />
-        </section>
-      </div>
-
-    </section>
-  )
-}
-
-function ActionInsight({ lowStock, totals, nextGoal }) {
-  if (lowStock.length) {
-    return (
-      <div className="insight warning">
-        <AlertCircle size={20} />
-        <div>
-          <strong>{lowStock[0].name} está perto de acabar.</strong>
-          <span>Revise a compra antes do próximo pico de vendas ou atendimento.</span>
+      <section className="report-board">
+        <div className="section-head">
+          <h3>Leitura do mes</h3>
+          <button type="button" onClick={onCommand}>explicar</button>
         </div>
-      </div>
-    )
-  }
-
-  if (totals.todayIncome === 0) {
-    return (
-      <div className="insight">
-        <Mic size={20} />
-        <div>
-          <strong>Registre o primeiro movimento do dia.</strong>
-          <span>Você pode falar: “recebi 120 de cliente e gastei 35 com material”.</span>
+        <div className="report-grid">
+          <article className="report-card report-net">
+            <span>{finance.report.period}</span>
+            <strong>{brl(finance.report.net)}</strong>
+            <small>{finance.report.net >= 0 ? 'saldo positivo ate aqui' : 'saidas passaram das entradas'}</small>
+          </article>
+          <article className="report-card">
+            <span>Entradas</span>
+            <strong>{brl(finance.report.income)}</strong>
+            <small>dinheiro que entrou no mes</small>
+          </article>
+          <article className="report-card">
+            <span>Saidas</span>
+            <strong>{brl(finance.report.expense)}</strong>
+            <small>gastos, compras e baixas registradas</small>
+          </article>
+          <article className="report-card report-split">
+            <span>Pessoal / Negocio</span>
+            <strong>{brl(finance.report.personal)} / {brl(finance.report.business)}</strong>
+            <small>resultado separado por vida financeira</small>
+          </article>
         </div>
-      </div>
-    )
-  }
-
-  if (nextGoal) {
-    const remaining = Math.max(0, nextGoal.target - nextGoal.current)
-    return (
-      <div className="insight success">
-        <Target size={20} />
-        <div>
-          <strong>Faltam {money(remaining)} para {nextGoal.title}.</strong>
-          <span>Separar parte das entradas de hoje aproxima essa meta sem esforço.</span>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="insight">
-      <TrendingUp size={20} />
-      <div>
-        <strong>Continue registrando em poucos segundos.</strong>
-        <span>Com alguns dias de uso, o resumo semanal fica bem mais inteligente.</span>
-      </div>
-    </div>
-  )
-}
-
-function LaunchView({
-  quickText,
-  setQuickText,
-  parseQuickText,
-  startVoice,
-  isListening,
-  drafts,
-  setDrafts,
-  confirmDraft,
-  confirmAllDrafts,
-  captureError,
-  manual,
-  setManual,
-  saveManual,
-  accounts,
-  transactions,
-  updateTransaction,
-  deleteTransaction,
-}) {
-  const readyCount = drafts.filter((draft) => !draftNeedsReview(draft)).length
-  const reviewCount = drafts.length - readyCount
-  const parsedIncome = drafts.filter((draft) => draft.type === 'income').reduce((acc, draft) => acc + Number(draft.amount || 0), 0)
-  const parsedExpense = drafts.filter((draft) => draft.type === 'expense').reduce((acc, draft) => acc + Number(draft.amount || 0), 0)
-  const quickExamples = [
-    'Recebi 180 de cliente hoje',
-    'Gastei 72 com material para o negocio',
-    'Paguei 120 de mercado pessoal',
-    'Vendi 3 unidades por 90',
-  ]
-
-  const updateDraft = (id, patch) => {
-    setDrafts((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)))
-  }
-
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Registrar</p>
-          <h2>Coloque o dia financeiro em ordem</h2>
-        </div>
-      </div>
-
-      <section className="register-hero">
-        <button type="button" onClick={startVoice} className={isListening ? 'recording' : ''}>
-          <Mic size={22} />
-          <strong>{isListening ? 'Ouvindo agora' : 'Falar'}</strong>
-          <span>Ideal para registrar na correria.</span>
-        </button>
-        <button type="button" onClick={() => document.getElementById('quick-entry-text')?.focus()}>
-          <Send size={22} />
-          <strong>Digitar</strong>
-          <span>Escreva do seu jeito e revise antes de salvar.</span>
-        </button>
-        <button type="button" onClick={() => document.getElementById('manual-entry-title')?.focus()}>
-          <ReceiptText size={22} />
-          <strong>Manual</strong>
-          <span>Use quando quiser controlar cada campo.</span>
-        </button>
       </section>
 
-      <section className="quick-capture">
-        <div className="capture-head">
-          <div>
-            <strong>Conte do seu jeito</strong>
-            <span>Uma frase pode virar varios lancamentos revisaveis.</span>
-          </div>
-          <span className="save-chip">Salva apos confirmar</span>
+      <section className="budget-rhythm">
+        <div className="section-head">
+          <h3>Ritmo do mes</h3>
+          <button type="button" onClick={() => openSheet('budget')}>novo limite</button>
         </div>
-        <div className="example-chips" aria-label="Exemplos de lancamento">
-          {quickExamples.map((example) => (
-            <button key={example} type="button" onClick={() => setQuickText(example)}>
-              {example}
+        <div className="budget-grid">
+          {finance.budgetRhythm.slice(0, 5).map((item) => (
+            <button type="button" className={`budget-card ${item.tone}`} key={item.id} onClick={() => openSheet({ type: 'budget', id: item.id })}>
+              <div>
+                <span>{item.ledger === 'business' ? 'negocio' : 'pessoal'}</span>
+                <strong>{item.label}</strong>
+                <small>{item.percent >= 100 ? 'passou do limite' : item.percent >= 78 ? 'quase no limite' : `${brl(item.left)} ainda livre`}</small>
+              </div>
+              <b>{Math.min(999, item.percent)}%</b>
+              <div className="budget-bar">
+                <i style={{ width: `${Math.min(100, item.percent)}%` }} />
+              </div>
+              <footer>
+                <span>{brl(item.used)} usado</span>
+                <span>{brl(item.limit)} limite</span>
+              </footer>
             </button>
           ))}
         </div>
-        <textarea
-          id="quick-entry-text"
-          value={quickText}
-          onChange={(event) => setQuickText(event.target.value)}
-          placeholder="Ex: vendi 3 atendimentos por 240, comprei material por 35 e retirei 80 para uso pessoal"
-        />
-        <div className="capture-actions">
-          <button className={`icon-action ${isListening ? 'recording' : ''}`} type="button" onClick={startVoice} title="Gravar por voz">
-            <Mic size={20} />
-          </button>
-          <button className="primary-action" type="button" onClick={parseQuickText}>
-            <Send size={18} />
-            Interpretar
-          </button>
+      </section>
+
+      <section className="action-plan">
+        <div className="section-head">
+          <h3>Plano de hoje</h3>
+          <button type="button" onClick={onCommand}>perguntar</button>
+        </div>
+        <div className="plan-grid">
+          {finance.nextActions.slice(0, 2).map((item) => (
+            <button type="button" className={`plan-card ${item.tone}`} key={item.id} onClick={() => runAction(item.action)}>
+              <span>{item.title}</span>
+              <strong>{item.text}</strong>
+              <ChevronRight size={18} />
+            </button>
+          ))}
+        </div>
+        <div className="forecast-line">
+          {finance.forecast.map((item, index) => (
+            <article key={item.label} style={{ '--step': index }}>
+              <span>{item.label}</span>
+              <strong>{brl(item.value)}</strong>
+            </article>
+          ))}
         </div>
       </section>
 
-      {captureError && <p className="form-error">{captureError}</p>}
+      <section className="money-map">
+        <div className="section-head">
+          <h3>Mapa do dinheiro</h3>
+          <button type="button" onClick={() => onCommand()}>analisar</button>
+        </div>
+        <div className="map-summary">
+          <article>
+            <span>Saidas mapeadas</span>
+            <strong>{brl(finance.outflowTotal)}</strong>
+          </article>
+          <article>
+            <span>Pessoal</span>
+            <strong>{brl(finance.personalOutflow)}</strong>
+          </article>
+          <article>
+            <span>Negocio</span>
+            <strong>{brl(finance.businessOutflow)}</strong>
+          </article>
+        </div>
+        <div className="category-map">
+          {finance.moneyMap.map((item) => (
+            <article key={item.label}>
+              <div>
+                <strong>{item.label}</strong>
+                <span>{brl(item.amount)} - {item.percent}%</span>
+              </div>
+              <div className="map-bar">
+                <span style={{ width: `${Math.max(7, item.percent)}%` }} />
+              </div>
+              <div className="category-split">
+                <small>Pessoal {brl(item.personal)}</small>
+                <small>Negocio {brl(item.business)}</small>
+                <b>{item.business > item.personal ? 'pesa mais no negocio' : 'pesa mais no pessoal'}</b>
+              </div>
+            </article>
+          ))}
+          {!finance.moneyMap.length && (
+            <div className="empty-feed">
+              <Activity />
+              <span>Registre gastos ou fixos e o Norte mostra para onde o dinheiro esta indo.</span>
+            </div>
+          )}
+        </div>
+      </section>
 
-      {drafts.length > 0 && (
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Confirmar antes de salvar</h3>
-            <button className="secondary-action" type="button" onClick={confirmAllDrafts} disabled={!readyCount}>
-              <Check size={18} />
-              Confirmar prontos
-            </button>
-          </div>
-          <div className="draft-summary">
-            <span>{readyCount} prontos</span>
-            <span>{reviewCount} para revisar</span>
-            <span>Entradas {money(parsedIncome)}</span>
-            <span>Saídas {money(parsedExpense)}</span>
-          </div>
-          <div className="draft-list">
-            {drafts.map((draft) => (
-              <article className={`draft-item ${draftNeedsReview(draft) ? 'needs-review' : ''}`} key={draft.id}>
-                <div className="draft-edit">
-                  <span className={`pill ${draft.type}`}>{draft.type === 'income' ? 'Entrada' : draft.type === 'expense' ? 'Saída' : 'Transferência'}</span>
-                  <div className="form-grid">
-                    <label>
-                      Descrição
-                      <input value={draft.title} onChange={(event) => updateDraft(draft.id, { title: event.target.value, itemName: event.target.value })} />
-                    </label>
-                    <label>
-                      Valor
-                      <input value={draft.amount} onChange={(event) => updateDraft(draft.id, { amount: Number(event.target.value || 0) })} inputMode="decimal" />
-                    </label>
-                    <label>
-                      Área
-                      <select
-                        value={draft.scope}
-                        onChange={(event) => {
-                          const scope = event.target.value
-                          updateDraft(draft.id, { scope, accountId: getDefaultAccountId(accounts, scope) })
-                        }}
-                      >
-                        <option value="business">Negócio</option>
-                        <option value="personal">Pessoal</option>
-                      </select>
-                    </label>
-                    <label>
-                      Conta
-                      <select value={draft.accountId} onChange={(event) => updateDraft(draft.id, { accountId: event.target.value })}>
-                        {getAccountOptions(accounts, draft.scope).map((account) => (
-                          <option key={account.id} value={account.id}>
-                            {account.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Categoria
-                      <select value={draft.category} onChange={(event) => updateDraft(draft.id, { category: event.target.value })}>
-                        {(draft.type === 'income' ? categories.income : draft.type === 'expense' ? categories.expense : categories.transfer).map((category) => (
-                          <option key={category}>{category}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Quantidade
-                      <input value={draft.quantity} onChange={(event) => updateDraft(draft.id, { quantity: Number(event.target.value || 0) })} inputMode="decimal" />
-                    </label>
-                  </div>
-                </div>
-                <strong>{money(draft.amount)}</strong>
-                <div className="row-actions">
-                  <button type="button" onClick={() => confirmDraft(draft)} title="Confirmar">
-                    <Check size={18} />
-                  </button>
-                  <button type="button" onClick={() => setDrafts((items) => items.filter((item) => item.id !== draft.id))} title="Descartar">
-                    <Trash2 size={18} />
-                  </button>
-                </div>
+      <section className="autopilot-panel">
+        <div className="section-head">
+          <h3>Autopiloto</h3>
+          <button type="button" onClick={() => openSheet('automation')}>nova regra</button>
+        </div>
+        <div className="automation-row">
+          {state.automations.slice(0, 4).map((rule) => (
+            <article key={rule.id}>
+              <Sparkles size={17} />
+              <span>quando falar</span>
+              <strong>{rule.keyword}</strong>
+              <small>{rule.ledger === 'business' ? 'Negocio' : 'Pessoal'} - {rule.category}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="recurrence-panel">
+        <div className="section-head">
+          <h3>Compromissos futuros</h3>
+          <button type="button" onClick={() => openSheet('recurrence')}>novo fixo</button>
+        </div>
+        <div className="commitment-summary">
+          <article>
+            <span>Reservado</span>
+            <strong>{brl(finance.monthlyCommitment)}</strong>
+          </article>
+          <article>
+            <span>Parcelas/mês</span>
+            <strong>{brl(finance.installmentMonthly)}</strong>
+          </article>
+          <article>
+            <span>Recebimentos fixos</span>
+            <strong>{brl(finance.recurringReceivable)}</strong>
+          </article>
+        </div>
+        <div className="recurrence-row">
+          {finance.commitments.map((item) => (
+            <article key={item.id}>
+              <CalendarClock size={17} />
+              <span>{item.label} - {item.ledger === 'business' ? 'Negocio' : 'Pessoal'}</span>
+              <strong>{item.title}</strong>
+              <small>{brl(item.amount)}</small>
+            </article>
+          ))}
+          {!finance.commitments.length && (
+            <div className="empty-feed">
+              <CalendarClock />
+              <span>Nenhum compromisso ainda. Cadastre fixos ou parcelas para o Norte prever seu mes.</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="split-ledgers">
+        {state.ledgers.map((ledger) => (
+          <article className={`ledger-card ${ledger.accent}`} key={ledger.id}>
+            <span>{ledger.name}</span>
+            <strong>{brl(finance.byLedger[ledger.id]?.balance || 0)}</strong>
+            <small>{ledger.intent}</small>
+          </article>
+        ))}
+      </section>
+
+      <section className="zero-actions">
+        <button type="button" onClick={onVoice}>
+          <Mic />
+          <strong>Falar</strong>
+          <span>audio vira movimento</span>
+        </button>
+        <button type="button" onClick={() => openSheet('money')}>
+          <Plus />
+          <strong>Novo</strong>
+          <span>entrada, gasto ou conta</span>
+        </button>
+        <button type="button" onClick={onCommand}>
+          <Brain />
+          <strong>Perguntar</strong>
+          <span>quanto posso gastar?</span>
+        </button>
+        <button type="button" onClick={() => openSheet('plans')}>
+          <Zap />
+          <strong>Norte+</strong>
+          <span>planos e recursos futuros</span>
+        </button>
+      </section>
+
+      <section className="north-compass">
+        <div className="compass-meter" style={{ '--score': `${finance.score * 3.6}deg` }}>
+          <Compass />
+        </div>
+        <div>
+          <p>bussola</p>
+          <h2>{finance.score}%</h2>
+          <span>{finance.status}</span>
+        </div>
+      </section>
+
+      <section className="finance-feed">
+        <div className="section-head">
+          <h3>Timeline inteligente</h3>
+          <button type="button" onClick={() => openSheet('goal')}>meta</button>
+        </div>
+        {!!state.goals.length && (
+          <div className="goal-row">
+            {state.goals.slice(0, 3).map((goal) => (
+              <article key={goal.id}>
+                <Target size={18} />
+                <span>{goal.title}</span>
+                <strong>{brl(goal.current || 0)} / {brl(goal.target)}</strong>
+                <button type="button" onClick={() => openSheet({ type: 'goal-fund', id: goal.id })}>guardar</button>
               </article>
             ))}
           </div>
-        </section>
-      )}
-
-      <section className="panel">
-        <div className="panel-heading">
-          <h3>Lançar manualmente</h3>
-          <ReceiptText size={18} />
-        </div>
-        <form className="manual-form" onSubmit={saveManual}>
-          <div className="segmented">
-            {['income', 'expense'].map((type) => (
-              <button key={type} className={manual.type === type ? 'selected' : ''} type="button" onClick={() => setManual({ ...manual, type })}>
-                {type === 'income' ? 'Entrada' : 'Saída'}
-              </button>
+        )}
+        <div className="timeline-grid">
+          <section className="timeline-lane ai-lane">
+            <span>Decisoes da IA</span>
+            {aiDecisions.map((message) => (
+              <article className="ai-decision" key={message.id}>
+                <Brain size={17} />
+                <strong>{message.text}</strong>
+              </article>
             ))}
-          </div>
-          <div className="form-grid">
-            <label>
-              Descrição
-              <input id="manual-entry-title" value={manual.title} onChange={(event) => setManual({ ...manual, title: event.target.value })} placeholder="Ex: Cliente Ana" />
-            </label>
-            <label>
-              Valor
-              <input
-                value={manual.amount}
-                onChange={(event) => setManual({ ...manual, amount: event.target.value })}
-                placeholder="0,00"
-                inputMode="decimal"
-              />
-            </label>
-            <label>
-              Área
-              <select value={manual.scope} onChange={(event) => setManual({ ...manual, scope: event.target.value, accountId: '' })}>
-                <option value="business">Negócio</option>
-                <option value="personal">Pessoal</option>
-              </select>
-            </label>
-            <label>
-              Conta
-              <select value={manual.accountId} onChange={(event) => setManual({ ...manual, accountId: event.target.value })}>
-                <option value="">Conta padrão</option>
-                {getAccountOptions(accounts, manual.scope).map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Categoria
-              <select value={manual.category} onChange={(event) => setManual({ ...manual, category: event.target.value })}>
-                {(manual.type === 'income' ? categories.income : categories.expense).map((category) => (
-                  <option key={category}>{category}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Data
-              <input type="date" value={manual.date} onChange={(event) => setManual({ ...manual, date: event.target.value })} />
-            </label>
-          </div>
-          <button className="primary-action" type="submit">
-            <Plus size={18} />
-            Salvar lançamento
-          </button>
-        </form>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <h3>Movimentos recentes</h3>
-          <ReceiptText size={18} />
-        </div>
-        <TransactionList items={transactions.slice(0, 6)} accounts={accounts} onUpdate={updateTransaction} onDelete={deleteTransaction} />
-      </section>
-    </section>
-  )
-}
-
-function MovementsView({ data, totals, accountBalances, transactions, accounts, onUpdate, onDelete, onNavigate }) {
-  const [filters, setFilters] = useState({ scope: 'all', type: 'all', text: '' })
-  const businessBalance = getBusinessBalance(accountBalances)
-  const personalBalance = getPersonalBalance(accountBalances)
-  const businessResult = totals.businessIncome - totals.businessExpense
-  const personalResult = totals.personalIncome - totals.personalExpense
-  const totalBalance = businessBalance + personalBalance
-  const incomeCount = transactions.filter((item) => item.type === 'income').length
-  const expenseCount = transactions.filter((item) => item.type === 'expense').length
-  const lastMovement = transactions[0]
-  const filteredTransactions = transactions.filter((item) => {
-    const matchesScope = filters.scope === 'all' || item.scope === filters.scope
-    const matchesType = filters.type === 'all' || item.type === filters.type
-    const text = normalizeText(`${item.title} ${item.category} ${item.note || ''}`)
-    const matchesText = !filters.text || text.includes(normalizeText(filters.text))
-    return matchesScope && matchesType && matchesText
-  })
-
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Movimentos</p>
-          <h2>Movimentos</h2>
-        </div>
-      </div>
-
-      <section className="finance-hero">
-        <div className="finance-hero-main">
-          <p className="eyebrow">Fluxo do dinheiro</p>
-          <span>Saldo total</span>
-          <strong>{money(totalBalance)}</strong>
-          <p>
-            Negocio em {money(businessResult)} e pessoal em {money(personalResult)} no periodo registrado.
-          </p>
-        </div>
-        <div className="finance-hero-side">
-          <span>{transactions.length} movimentos</span>
-          <span>{incomeCount} entradas</span>
-          <span>{expenseCount} saidas</span>
-          <span>{lastMovement ? `Ultimo: ${lastMovement.title}` : 'Nenhum movimento ainda'}</span>
-        </div>
-      </section>
-
-      <div className="money-pulse-grid">
-        <Metric title="Entradas negocio" value={money(totals.businessIncome)} icon={ArrowUpRight} tone="green" />
-        <Metric title="Saidas negocio" value={money(totals.businessExpense)} icon={ArrowDownRight} tone="red" />
-        <Metric title="Saldo negocio" value={money(businessBalance)} icon={Store} tone="blue" />
-        <Metric title="Saldo pessoal" value={money(personalBalance)} icon={Wallet} tone="amber" />
-      </div>
-
-      <div className="action-card-grid">
-        <button type="button" onClick={() => onNavigate('sales')}>
-          <ShoppingCart size={20} />
-          <strong>Vendas</strong>
-          <span>Registrar receita e baixa de estoque.</span>
-        </button>
-        <button type="button" onClick={() => onNavigate('purchases')}>
-          <Package size={20} />
-          <strong>Compras</strong>
-          <span>Entrada de material e contas a pagar.</span>
-        </button>
-        <button type="button" onClick={() => onNavigate('business')}>
-          <Briefcase size={20} />
-          <strong>Operacao</strong>
-          <span>Produtos, fornecedores e estrutura.</span>
-        </button>
-        <button type="button" onClick={() => onNavigate('reports')}>
-          <PieChart size={20} />
-          <strong>Insights</strong>
-          <span>Relatorios e leitura do caixa.</span>
-        </button>
-      </div>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <h3>Linha do tempo</h3>
-          <ReceiptText size={18} />
-        </div>
-        <div className="filter-bar">
-          <input value={filters.text} onChange={(event) => setFilters({ ...filters, text: event.target.value })} placeholder="Buscar por descricao ou categoria" />
-          <div className="chip-row">
-            {[
-              ['all', 'Todos'],
-              ['business', 'Negocio'],
-              ['personal', 'Pessoal'],
-            ].map(([scope, label]) => (
-              <button key={scope} className={filters.scope === scope ? 'selected' : ''} type="button" onClick={() => setFilters({ ...filters, scope })}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="chip-row">
-            {[
-              ['all', 'Tudo'],
-              ['income', 'Entradas'],
-              ['expense', 'Saidas'],
-              ['transfer', 'Transferencias'],
-            ].map(([type, label]) => (
-              <button key={type} className={filters.type === type ? 'selected' : ''} type="button" onClick={() => setFilters({ ...filters, type })}>
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <TransactionList items={filteredTransactions} accounts={accounts} onUpdate={onUpdate} onDelete={onDelete} />
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <h3>Operacao resumida</h3>
-          <Sparkles size={18} />
-        </div>
-        <div className="operation-summary">
-          <span>{data.sales?.length || 0} vendas</span>
-          <span>{data.purchases?.length || 0} compras</span>
-          <span>{data.catalog?.length || 0} itens</span>
-          <span>{data.suppliers?.length || 0} fornecedores</span>
-        </div>
-      </section>
-    </section>
-  )
-}
-
-function PayReceiveView({ totals, bills, clients, onNavigate }) {
-  const openBills = bills.filter((bill) => bill.status !== 'paid')
-  const todayDate = today()
-  const overdueBills = openBills.filter((bill) => bill.due < todayDate)
-  const dueTodayBills = openBills.filter((bill) => bill.due === todayDate)
-  const pendingClients = clients.filter((client) => Number(client.receivable || 0) > 0)
-  const openReceivables = totals.billsReceivable + totals.receivable
-  const openPayables = totals.billsPayable
-  const forecastBalance = openReceivables - openPayables
-  const overdueTotal = overdueBills.reduce((acc, bill) => acc + Number(bill.amount || 0), 0)
-  const nextBills = [...openBills].sort((a, b) => `${a.due}`.localeCompare(`${b.due}`)).slice(0, 5)
-  const priorityItems = [
-    ...overdueBills.slice(0, 3).map((bill) => ({
-      tone: 'danger',
-      title: `${bill.type === 'receivable' ? 'Receber vencido' : 'Pagar vencido'}: ${bill.title}`,
-      detail: `${money(bill.amount)} venceu em ${new Date(`${bill.due}T12:00:00`).toLocaleDateString('pt-BR')}`,
-      action: bill.type === 'receivable' ? 'Cobrar' : 'Pagar',
-      target: 'bills',
-    })),
-    ...dueTodayBills.slice(0, 3).map((bill) => ({
-      tone: 'warning',
-      title: `${bill.type === 'receivable' ? 'Receber hoje' : 'Pagar hoje'}: ${bill.title}`,
-      detail: `${money(bill.amount)} vence hoje`,
-      action: 'Abrir',
-      target: 'bills',
-    })),
-    ...pendingClients.slice(0, 3).map((client) => ({
-      tone: 'info',
-      title: `${client.name} tem valor em aberto`,
-      detail: `${money(client.receivable)} para receber`,
-      action: 'Clientes',
-      target: 'clients',
-    })),
-  ].slice(0, 5)
-
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Agenda financeira</p>
-          <h2>Pagar e receber</h2>
-        </div>
-      </div>
-
-      <section className="finance-hero pay-hero">
-        <div className="finance-hero-main">
-          <p className="eyebrow">Previsao aberta</p>
-          <span>Depois de pagar e receber</span>
-          <strong>{money(forecastBalance)}</strong>
-          <p>
-            {forecastBalance >= 0
-              ? 'Os recebimentos em aberto cobrem as contas cadastradas.'
-              : 'As contas em aberto passam dos recebimentos previstos. Priorize cobrancas.'}
-          </p>
-        </div>
-        <div className="finance-hero-side">
-          <span>{money(openReceivables)} a receber</span>
-          <span>{money(openPayables)} a pagar</span>
-          <span>{overdueBills.length} vencidas</span>
-          <span>{money(overdueTotal)} em atraso</span>
-        </div>
-      </section>
-
-      <div className="money-pulse-grid">
-        <Metric title="A pagar" value={money(openPayables)} icon={ArrowDownRight} tone="red" />
-        <Metric title="A receber" value={money(openReceivables)} icon={ArrowUpRight} tone="green" />
-        <Metric title="Vence hoje" value={dueTodayBills.length} icon={Calendar} tone="amber" />
-        <Metric title="Clientes devendo" value={pendingClients.length} icon={Users} tone="amber" />
-      </div>
-
-      <div className="action-card-grid compact">
-        <button type="button" onClick={() => onNavigate('bills')}>
-          <Bell size={20} />
-          <strong>Contas</strong>
-          <span>Pagar, receber e baixar vencimentos.</span>
-        </button>
-        <button type="button" onClick={() => onNavigate('clients')}>
-          <Users size={20} />
-          <strong>Clientes</strong>
-          <span>Cobrar valores e acompanhar em aberto.</span>
-        </button>
-        <button type="button" onClick={() => onNavigate('register')}>
-          <Plus size={20} />
-          <strong>Registrar</strong>
-          <span>Criar movimento novo por voz ou texto.</span>
-        </button>
-      </div>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <h3>Fila de acao</h3>
-          <AlertCircle size={18} />
-        </div>
-        <div className="priority-list">
-          {priorityItems.length ? (
-            priorityItems.map((item) => (
-              <article className={`priority-item ${item.tone}`} key={`${item.title}-${item.detail}`}>
+          </section>
+          <section className="timeline-lane">
+            <span>Agenda aberta</span>
+            {openAgenda.map((item) => (
+              <article className="feed-item urgent-feed" key={item.id}>
+                <div className={`feed-dot ${item.ledger}`}>
+                  {item.type === 'receivable' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}
+                </div>
                 <div>
                   <strong>{item.title}</strong>
-                  <span>{item.detail}</span>
+                  <span>{item.category || 'Agenda'} - vence {dateLabel(item.due)}</span>
                 </div>
-                <button className="mini-action" type="button" onClick={() => onNavigate(item.target)}>
-                  {item.action}
-                </button>
+                <div className="feed-value">
+                  <b>{brl(item.amount)}</b>
+                  <button type="button" onClick={() => settleObligation(item.id)}>
+                    {item.type === 'receivable' ? 'recebi' : 'paguei'}
+                  </button>
+                </div>
               </article>
-            ))
-          ) : (
-            <p className="empty-state">Nada urgente. Cadastre vencimentos para o Norte montar sua agenda.</p>
-          )}
-        </div>
-      </section>
-
-      <div className="pay-content-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Proximos vencimentos</h3>
-            <Calendar size={18} />
-          </div>
-          <div className="cashflow-list">
-            {nextBills.length ? (
-              nextBills.map((bill) => (
-                <article key={bill.id} className="cashflow-item">
-                  <div>
-                    <strong>{bill.title}</strong>
-                    <span>{bill.type === 'receivable' ? 'Receber' : 'Pagar'} em {new Date(`${bill.due}T12:00:00`).toLocaleDateString('pt-BR')}</span>
-                  </div>
-                  <strong className={bill.type === 'receivable' ? 'positive' : 'negative'}>{money(bill.amount)}</strong>
-                </article>
-              ))
-            ) : (
-              <p className="empty-state">Nenhuma conta aberta. Cadastre contas para prever seu caixa.</p>
-            )}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Clientes com valor em aberto</h3>
-            <Users size={18} />
-          </div>
-          <div className="cashflow-list">
-            {pendingClients.length ? (
-              pendingClients.slice(0, 5).map((client) => (
-                <article key={client.id} className="cashflow-item">
-                  <div>
-                    <strong>{client.name}</strong>
-                    <span>{client.due ? `Vence em ${new Date(`${client.due}T12:00:00`).toLocaleDateString('pt-BR')}` : 'Sem vencimento'}</span>
-                  </div>
-                  <strong className="positive">{money(client.receivable)}</strong>
-                </article>
-              ))
-            ) : (
-              <p className="empty-state">Nenhum cliente com valor em aberto agora.</p>
-            )}
-          </div>
-        </section>
-      </div>
-    </section>
-  )
-}
-
-function AssistantView({ totals, accountBalances, lowStock }) {
-  const businessBalance = getBusinessBalance(accountBalances)
-  const personalBalance = getPersonalBalance(accountBalances)
-  const openPayables = totals.billsPayable
-  const openReceivables = totals.billsReceivable + totals.receivable
-  const estimatedProfit = totals.businessIncome - totals.businessExpense
-  const [decision, setDecision] = useState('withdraw')
-  const [inputs, setInputs] = useState({ amount: '500', days: '7', cost: '25', margin: '35', fee: '5' })
-
-  const amount = Number(inputs.amount || 0)
-  const days = Math.max(1, Number(inputs.days || 1))
-  const cost = Number(inputs.cost || 0)
-  const margin = Number(inputs.margin || 0)
-  const fee = Number(inputs.fee || 0)
-  const safeBusinessCash = Math.max(0, businessBalance + openReceivables - openPayables)
-  const suggestedWithdrawal = Math.max(0, safeBusinessCash * 0.35)
-  const priceBase = margin >= 100 ? 0 : cost / Math.max(0.01, 1 - margin / 100)
-  const priceWithFee = priceBase / Math.max(0.01, 1 - fee / 100)
-
-  const result = {
-    withdraw: {
-      title: amount <= suggestedWithdrawal ? 'Retirada parece segura.' : 'Retirada merece cuidado.',
-      text:
-        amount <= suggestedWithdrawal
-          ? `Depois de contas e recebimentos, o limite confortável calculado é ${money(suggestedWithdrawal)}.`
-          : `O limite confortável calculado é ${money(suggestedWithdrawal)}. Se retirar ${money(amount)}, acompanhe as contas abertas.`,
-      action: `Caixa do negócio: ${money(businessBalance)} • contas a pagar: ${money(openPayables)}.`,
-    },
-    buy: {
-      title: businessBalance - amount >= openPayables ? 'A compra cabe no caixa.' : 'A compra pode apertar o caixa.',
-      text:
-        businessBalance - amount >= openPayables
-          ? `Após comprar, ainda ficariam ${money(businessBalance - amount)} antes dos próximos recebimentos.`
-          : `Após comprar, ficariam ${money(businessBalance - amount)} para cobrir ${money(openPayables)} em contas abertas.`,
-      action: openReceivables ? `Há ${money(openReceivables)} previsto para receber.` : 'Sem recebimentos em aberto cadastrados.',
-    },
-    sales: {
-      title: `Meta diária: ${money(amount / days)}.`,
-      text: `Para juntar ou faturar ${money(amount)} em ${days} dias, acompanhe esse alvo todos os dias.`,
-      action: `Lucro estimado registrado até agora: ${money(estimatedProfit)}.`,
-    },
-    price: {
-      title: `Preço sugerido: ${money(priceWithFee)}.`,
-      text: `Com custo de ${money(cost)}, margem desejada de ${number(margin)}% e taxa de ${number(fee)}%, esse é o preço mínimo sugerido.`,
-      action: `Lucro estimado por unidade: ${money(priceWithFee - cost - priceWithFee * (fee / 100))}.`,
-    },
-  }[decision]
-
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Assistente de decisão</p>
-          <h2>Respostas práticas para hoje</h2>
-        </div>
-      </div>
-
-      <div className="metric-grid">
-        <Metric title="Caixa negócio" value={money(businessBalance)} icon={Store} tone="blue" />
-        <Metric title="Caixa pessoal" value={money(personalBalance)} icon={Wallet} tone="blue" />
-        <Metric title="A pagar" value={money(openPayables)} icon={ArrowDownRight} tone="red" />
-        <Metric title="A receber" value={money(openReceivables)} icon={ArrowUpRight} tone="green" />
-      </div>
-
-      <div className="content-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Tomar decisão</h3>
-            <Sparkles size={18} />
-          </div>
-          <div className="segmented wide">
-            <button className={decision === 'withdraw' ? 'selected' : ''} type="button" onClick={() => setDecision('withdraw')}>
-              Retirada
-            </button>
-            <button className={decision === 'buy' ? 'selected' : ''} type="button" onClick={() => setDecision('buy')}>
-              Compra
-            </button>
-            <button className={decision === 'sales' ? 'selected' : ''} type="button" onClick={() => setDecision('sales')}>
-              Meta
-            </button>
-            <button className={decision === 'price' ? 'selected' : ''} type="button" onClick={() => setDecision('price')}>
-              Preço
-            </button>
-          </div>
-
-          <div className="form-grid decision-inputs">
-            {decision !== 'price' && (
-              <label>
-                Valor
-                <input value={inputs.amount} onChange={(event) => setInputs({ ...inputs, amount: event.target.value })} inputMode="decimal" />
-              </label>
-            )}
-            {decision === 'sales' && (
-              <label>
-                Dias
-                <input value={inputs.days} onChange={(event) => setInputs({ ...inputs, days: event.target.value })} inputMode="numeric" />
-              </label>
-            )}
-            {decision === 'price' && (
-              <>
-                <label>
-                  Custo
-                  <input value={inputs.cost} onChange={(event) => setInputs({ ...inputs, cost: event.target.value })} inputMode="decimal" />
-                </label>
-                <label>
-                  Margem %
-                  <input value={inputs.margin} onChange={(event) => setInputs({ ...inputs, margin: event.target.value })} inputMode="decimal" />
-                </label>
-                <label>
-                  Taxas %
-                  <input value={inputs.fee} onChange={(event) => setInputs({ ...inputs, fee: event.target.value })} inputMode="decimal" />
-                </label>
-              </>
-            )}
-          </div>
-        </section>
-
-        <section className="panel decision-result">
-          <div className="panel-heading">
-            <h3>{result.title}</h3>
-            <Check size={18} />
-          </div>
-          <p>{result.text}</p>
-          <div className="insight success">
-            <TrendingUp size={20} />
-            <div>
-              <strong>Próxima ação</strong>
-              <span>{result.action}</span>
-            </div>
-          </div>
-          {lowStock.length > 0 && (
-            <div className="insight warning">
-              <AlertCircle size={20} />
-              <div>
-                <strong>{lowStock[0].name} está crítico.</strong>
-                <span>Antes de vender mais, veja se esse item limita sua entrega.</span>
-              </div>
-            </div>
-          )}
-        </section>
-      </div>
-    </section>
-  )
-}
-
-function SalesView({ sales, clients, catalog, newSale, setNewSale, saveSale, deleteSale }) {
-  const selectedItem = catalog.find((item) => item.id === newSale.itemId) || catalog[0]
-  const paidSales = sales.filter((sale) => sale.status === 'paid')
-  const pendingSales = sales.filter((sale) => sale.status === 'pending')
-  const totalPaid = paidSales.reduce((acc, sale) => acc + Number(sale.total || 0), 0)
-  const totalPending = pendingSales.reduce((acc, sale) => acc + Number(sale.total || 0), 0)
-  const quantity = parseAmountInput(newSale.quantity || 1)
-  const unitPrice = parseAmountInput(newSale.unitPrice || selectedItem?.price || 0)
-  const saleTotal = quantity * unitPrice
-  const saleCost = quantity * Number(selectedItem?.cost || 0)
-  const saleMargin = saleTotal - saleCost
-  const saleStockAfter = selectedItem?.stock === null ? null : Math.max(0, Number(selectedItem?.stock || 0) - quantity)
-  const saleCreatesCash = newSale.status === 'paid'
-
-  function selectItem(itemId) {
-    const item = catalog.find((catalogItem) => catalogItem.id === itemId)
-    setNewSale({ ...newSale, itemId, unitPrice: item?.price || '' })
-  }
-
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Vendas e serviços</p>
-          <h2>Registre venda paga ou valor a receber</h2>
-        </div>
-      </div>
-
-      <div className="metric-grid">
-        <Metric title="Vendas pagas" value={money(totalPaid)} icon={ArrowUpRight} tone="green" />
-        <Metric title="A receber" value={money(totalPending)} icon={Bell} tone="amber" />
-        <Metric title="Pedidos" value={sales.length} icon={ShoppingCart} tone="blue" />
-        <Metric title="Clientes" value={clients.length} icon={Users} tone="blue" />
-      </div>
-
-      <div className="content-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Nova venda</h3>
-            <ShoppingCart size={18} />
-          </div>
-          <form className="stack-form" onSubmit={saveSale}>
-            <label>
-              Cliente
-              <input
-                list="clients-list"
-                value={newSale.clientName}
-                onChange={(event) => setNewSale({ ...newSale, clientName: event.target.value })}
-                placeholder="Nome do cliente"
-              />
-              <datalist id="clients-list">
-                {clients.map((client) => (
-                  <option key={client.id} value={client.name} />
-                ))}
-              </datalist>
-            </label>
-            <label>
-              Produto, serviço ou projeto
-              <select value={newSale.itemId || selectedItem?.id || ''} onChange={(event) => selectItem(event.target.value)}>
-                {catalog.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="form-grid">
-              <label>
-                Quantidade
-                <input value={newSale.quantity} onChange={(event) => setNewSale({ ...newSale, quantity: event.target.value })} inputMode="decimal" />
-              </label>
-              <label>
-                Valor unitário
-                <input value={newSale.unitPrice} onChange={(event) => setNewSale({ ...newSale, unitPrice: event.target.value })} inputMode="decimal" />
-              </label>
-              <label>
-                Data
-                <input type="date" value={newSale.date} onChange={(event) => setNewSale({ ...newSale, date: event.target.value })} />
-              </label>
-              <label>
-                Vencimento
-                <input type="date" value={newSale.due} onChange={(event) => setNewSale({ ...newSale, due: event.target.value })} />
-              </label>
-            </div>
-            <div className="segmented wide">
-              <button className={newSale.status === 'paid' ? 'selected' : ''} type="button" onClick={() => setNewSale({ ...newSale, status: 'paid' })}>
-                Pago
-              </button>
-              <button className={newSale.status === 'pending' ? 'selected' : ''} type="button" onClick={() => setNewSale({ ...newSale, status: 'pending' })}>
-                A receber
-              </button>
-            </div>
-            <label>
-              Observação
-              <input value={newSale.notes} onChange={(event) => setNewSale({ ...newSale, notes: event.target.value })} placeholder="Pedido, contrato, entrega ou detalhe" />
-            </label>
-            <div className="sale-total">
-              <span>Total da venda</span>
-              <strong>{money(saleTotal)}</strong>
-            </div>
-            <div className="impact-box">
-              <span>{saleCreatesCash ? 'Entra no caixa agora' : 'Cria conta a receber'}</span>
-              <span>Margem estimada: <strong className={saleMargin >= 0 ? 'positive' : 'negative'}>{money(saleMargin)}</strong></span>
-              <span>
-                {saleStockAfter === null
-                  ? 'Item sem controle de estoque'
-                  : `Estoque após salvar: ${number(saleStockAfter)}`}
-              </span>
-              {saleStockAfter !== null && saleStockAfter <= Number(selectedItem?.minStock || 0) && (
-                <span className="warning-text">Estoque ficará em nível crítico.</span>
-              )}
-            </div>
-            <button className="primary-action" type="submit">
-              <Check size={18} />
-              Salvar venda
-            </button>
-          </form>
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Vendas recentes</h3>
-            <ReceiptText size={18} />
-          </div>
-          <div className="sales-list">
-            {sales.length ? (
-              sales.map((sale) => (
-                <article key={sale.id} className="sale-row">
-                  <div>
-                    <span className={`pill ${sale.status === 'paid' ? 'income' : 'transfer'}`}>
-                      {sale.status === 'paid' ? 'Pago' : 'A receber'}
-                    </span>
-                    <strong>{sale.itemName}</strong>
-                    <span>
-                      {sale.clientName} • {number(sale.quantity)} x {money(sale.unitPrice)} • {new Date(`${sale.date}T12:00:00`).toLocaleDateString('pt-BR')}
-                    </span>
-                  </div>
-                  <strong>{money(sale.total)}</strong>
-                  <button className="ghost-icon" type="button" onClick={() => deleteSale(sale.id)} title="Excluir venda">
-                    <Trash2 size={17} />
-                  </button>
-                </article>
-              ))
-            ) : (
-              <p className="empty-state">Nenhuma venda registrada ainda.</p>
-            )}
-          </div>
-        </section>
-      </div>
-    </section>
-  )
-}
-
-function PurchasesView({ purchases, suppliers, catalog, newPurchase, setNewPurchase, savePurchase, deletePurchase }) {
-  const selectedItem = catalog.find((item) => item.id === newPurchase.itemId) || catalog[0]
-  const paidPurchases = purchases.filter((purchase) => purchase.status === 'paid')
-  const pendingPurchases = purchases.filter((purchase) => purchase.status === 'pending')
-  const totalPaid = paidPurchases.reduce((acc, purchase) => acc + Number(purchase.total || 0), 0)
-  const totalPending = pendingPurchases.reduce((acc, purchase) => acc + Number(purchase.total || 0), 0)
-  const quantity = parseAmountInput(newPurchase.quantity || 1)
-  const unitCost = parseAmountInput(newPurchase.unitCost || selectedItem?.cost || 0)
-  const purchaseTotal = quantity * unitCost
-  const purchaseStockAfter = selectedItem?.stock === null ? null : Number(selectedItem?.stock || 0) + quantity
-  const purchaseCreatesCashOut = newPurchase.status === 'paid'
-
-  function selectItem(itemId) {
-    const item = catalog.find((catalogItem) => catalogItem.id === itemId)
-    setNewPurchase({ ...newPurchase, itemId, unitCost: item?.cost || '' })
-  }
-
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Compras e fornecedores</p>
-          <h2>Reponha material, estoque ou custo do serviço</h2>
-        </div>
-      </div>
-
-      <div className="metric-grid">
-        <Metric title="Compras pagas" value={money(totalPaid)} icon={ArrowDownRight} tone="red" />
-        <Metric title="A pagar" value={money(totalPending)} icon={Bell} tone="amber" />
-        <Metric title="Compras" value={purchases.length} icon={Package} tone="blue" />
-        <Metric title="Fornecedores" value={suppliers.length} icon={Users} tone="blue" />
-      </div>
-
-      <div className="content-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Nova compra</h3>
-            <Package size={18} />
-          </div>
-          <form className="stack-form" onSubmit={savePurchase}>
-            <label>
-              Fornecedor
-              <input
-                list="suppliers-list"
-                value={newPurchase.supplierName}
-                onChange={(event) => setNewPurchase({ ...newPurchase, supplierName: event.target.value })}
-                placeholder="Nome do fornecedor"
-              />
-              <datalist id="suppliers-list">
-                {suppliers.map((supplier) => (
-                  <option key={supplier.id} value={supplier.name} />
-                ))}
-              </datalist>
-            </label>
-            <label>
-              Item comprado
-              <select value={newPurchase.itemId || selectedItem?.id || ''} onChange={(event) => selectItem(event.target.value)}>
-                {catalog.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="form-grid">
-              <label>
-                Quantidade
-                <input value={newPurchase.quantity} onChange={(event) => setNewPurchase({ ...newPurchase, quantity: event.target.value })} inputMode="decimal" />
-              </label>
-              <label>
-                Custo unitário
-                <input value={newPurchase.unitCost} onChange={(event) => setNewPurchase({ ...newPurchase, unitCost: event.target.value })} inputMode="decimal" />
-              </label>
-              <label>
-                Data
-                <input type="date" value={newPurchase.date} onChange={(event) => setNewPurchase({ ...newPurchase, date: event.target.value })} />
-              </label>
-              <label>
-                Vencimento
-                <input type="date" value={newPurchase.due} onChange={(event) => setNewPurchase({ ...newPurchase, due: event.target.value })} />
-              </label>
-            </div>
-            <div className="segmented wide">
-              <button className={newPurchase.status === 'paid' ? 'selected' : ''} type="button" onClick={() => setNewPurchase({ ...newPurchase, status: 'paid' })}>
-                Pago
-              </button>
-              <button className={newPurchase.status === 'pending' ? 'selected' : ''} type="button" onClick={() => setNewPurchase({ ...newPurchase, status: 'pending' })}>
-                A pagar
-              </button>
-            </div>
-            <label>
-              Observação
-              <input value={newPurchase.notes} onChange={(event) => setNewPurchase({ ...newPurchase, notes: event.target.value })} placeholder="Nota, lote, entrega ou detalhe" />
-            </label>
-            <div className="sale-total expense-total">
-              <span>Total da compra</span>
-              <strong>{money(purchaseTotal)}</strong>
-            </div>
-            <div className="impact-box expense-impact">
-              <span>{purchaseCreatesCashOut ? 'Sai do caixa agora' : 'Cria conta a pagar'}</span>
-              <span>Custo unitário atualizado: <strong>{money(unitCost)}</strong></span>
-              <span>
-                {purchaseStockAfter === null
-                  ? 'Item sem controle de estoque'
-                  : `Estoque após salvar: ${number(purchaseStockAfter)}`}
-              </span>
-            </div>
-            <button className="primary-action" type="submit">
-              <Check size={18} />
-              Salvar compra
-            </button>
-          </form>
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Compras recentes</h3>
-            <ReceiptText size={18} />
-          </div>
-          <div className="sales-list">
-            {purchases.length ? (
-              purchases.map((purchase) => (
-                <article key={purchase.id} className="sale-row">
-                  <div>
-                    <span className={`pill ${purchase.status === 'paid' ? 'expense' : 'transfer'}`}>
-                      {purchase.status === 'paid' ? 'Pago' : 'A pagar'}
-                    </span>
-                    <strong>{purchase.itemName}</strong>
-                    <span>
-                      {purchase.supplierName} • {number(purchase.quantity)} x {money(purchase.unitCost)} • {new Date(`${purchase.date}T12:00:00`).toLocaleDateString('pt-BR')}
-                    </span>
-                  </div>
-                  <strong>{money(purchase.total)}</strong>
-                  <button className="ghost-icon" type="button" onClick={() => deletePurchase(purchase.id)} title="Excluir compra">
-                    <Trash2 size={17} />
-                  </button>
-                </article>
-              ))
-            ) : (
-              <p className="empty-state">Nenhuma compra registrada ainda.</p>
-            )}
-          </div>
-        </section>
-      </div>
-    </section>
-  )
-}
-
-function BusinessView({
-  data,
-  profile,
-  totals,
-  lowStock,
-  newCatalogItem,
-  setNewCatalogItem,
-  saveCatalogItem,
-  updateCatalogItem,
-  deleteCatalogItem,
-}) {
-  const margin = totals.businessIncome ? ((totals.businessIncome - totals.businessExpense) / totals.businessIncome) * 100 : 0
-  const showStock = ['products', 'production', 'hybrid'].includes(data.user.profile)
-  const [priceLab, setPriceLab] = useState({ cost: '20', margin: '35', fee: '5' })
-  const priceCost = Number(priceLab.cost || 0)
-  const desiredMargin = Number(priceLab.margin || 0)
-  const fee = Number(priceLab.fee || 0)
-  const suggestedPrice =
-    desiredMargin >= 100 ? 0 : priceCost / Math.max(0.01, 1 - desiredMargin / 100) / Math.max(0.01, 1 - fee / 100)
-  const suggestedProfit = suggestedPrice - priceCost - suggestedPrice * (fee / 100)
-
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">{profile.example}</p>
-          <h2>Operação adaptada ao seu negócio</h2>
-        </div>
-      </div>
-
-      <div className="metric-grid">
-        <Metric title="Faturamento" value={money(totals.businessIncome)} icon={TrendingUp} tone="green" />
-        <Metric title="Custos e despesas" value={money(totals.businessExpense)} icon={ReceiptText} tone="red" />
-        <Metric title="Margem estimada" value={`${number(margin)}%`} icon={BarChart3} tone="blue" />
-        <Metric title="Itens críticos" value={lowStock.length} icon={Package} tone="amber" />
-      </div>
-
-      <section className="panel price-lab">
-        <div className="panel-heading">
-          <h3>Preço ideal rápido</h3>
-          <BarChart3 size={18} />
-        </div>
-        <div className="form-grid">
-          <label>
-            Custo por unidade
-            <input value={priceLab.cost} onChange={(event) => setPriceLab({ ...priceLab, cost: event.target.value })} inputMode="decimal" />
-          </label>
-          <label>
-            Margem desejada %
-            <input value={priceLab.margin} onChange={(event) => setPriceLab({ ...priceLab, margin: event.target.value })} inputMode="decimal" />
-          </label>
-          <label>
-            Taxas %
-            <input value={priceLab.fee} onChange={(event) => setPriceLab({ ...priceLab, fee: event.target.value })} inputMode="decimal" />
-          </label>
-          <div className="price-result">
-            <span>Venda por pelo menos</span>
-            <strong>{money(suggestedPrice)}</strong>
-            <small>Lucro estimado: {money(suggestedProfit)}</small>
-          </div>
-        </div>
-      </section>
-
-      <div className="content-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Produtos, serviços e materiais</h3>
-            <Package size={18} />
-          </div>
-          <div className="catalog-list">
-            {data.catalog.map((item) => (
-              <article key={item.id} className="catalog-editor">
-                <div className="form-grid">
-                  <label>
-                    Nome
-                    <input value={item.name} onChange={(event) => updateCatalogItem(item.id, { name: event.target.value })} />
-                  </label>
-                  <label>
-                    Tipo
-                    <select
-                      value={item.type}
-                      onChange={(event) => {
-                        const type = event.target.value
-                        updateCatalogItem(item.id, {
-                          type,
-                          stock: type === 'service' || type === 'project' ? null : Number(item.stock || 0),
-                          minStock: type === 'service' || type === 'project' ? null : Number(item.minStock || 0),
-                        })
-                      }}
-                    >
-                      <option value="service">Serviço</option>
-                      <option value="product">Produto</option>
-                      <option value="material">Material</option>
-                      <option value="project">Projeto</option>
-                    </select>
-                  </label>
-                  <label>
-                    Preço
-                    <input value={item.price} onChange={(event) => updateCatalogItem(item.id, { price: Number(event.target.value || 0) })} inputMode="decimal" />
-                  </label>
-                  <label>
-                    Custo
-                    <input value={item.cost} onChange={(event) => updateCatalogItem(item.id, { cost: Number(event.target.value || 0) })} inputMode="decimal" />
-                  </label>
-                  {item.stock !== null && (
-                    <>
-                      <label>
-                        Estoque
-                        <input value={item.stock} onChange={(event) => updateCatalogItem(item.id, { stock: Number(event.target.value || 0) })} inputMode="decimal" />
-                      </label>
-                      <label>
-                        Mínimo
-                        <input value={item.minStock} onChange={(event) => updateCatalogItem(item.id, { minStock: Number(event.target.value || 0) })} inputMode="decimal" />
-                      </label>
-                    </>
-                  )}
+            ))}
+          </section>
+          <section className="timeline-lane">
+            <span>Movimentos recentes</span>
+            {recentEvents.map((item) => (
+              <article className="feed-item" key={item.id}>
+                <div className={`feed-dot ${item.ledger}`}>
+                  {item.type === 'income' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}
                 </div>
-                <div className="catalog-actions">
+                <div>
+                  <strong>{item.title}</strong>
                   <span>
-                    {item.price
-                      ? `Margem ${number(((Number(item.price) - Number(item.cost || 0)) / Number(item.price || 1)) * 100)}%`
-                      : item.stock === null
-                        ? 'Sem preço'
-                        : `${number(item.stock)} em estoque`}
+                    {item.category || 'Geral'} - {dateLabel(item.date)}
+                    {item.installments > 1 ? ` - ${item.installments}x de ${brl(item.installmentAmount)}` : ''}
                   </span>
-                  <button type="button" className="ghost-icon" onClick={() => deleteCatalogItem(item.id)} title="Excluir item">
-                    <Trash2 size={17} />
-                  </button>
+                </div>
+                <div className="feed-value">
+                  <b>{brl(item.amount)}</b>
                 </div>
               </article>
             ))}
+          </section>
+        </div>
+        {!state.events.length && !finance.upcoming.length && (
+          <div className="empty-feed">
+            <Sparkles />
+            <span>Fale seu primeiro movimento e o Norte monta o feed sozinho.</span>
           </div>
-        </section>
+        )}
+      </section>
+    </section>
+  )
+}
 
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Adicionar item</h3>
-            <Plus size={18} />
-          </div>
-          <form className="stack-form" onSubmit={saveCatalogItem}>
-            <label>
-              Nome
-              <input value={newCatalogItem.name} onChange={(event) => setNewCatalogItem({ ...newCatalogItem, name: event.target.value })} />
-            </label>
-            <label>
-              Tipo
-              <select value={newCatalogItem.type} onChange={(event) => setNewCatalogItem({ ...newCatalogItem, type: event.target.value })}>
-                <option value="service">Serviço</option>
-                <option value="product">Produto</option>
-                <option value="material">Material</option>
-                <option value="project">Projeto</option>
-              </select>
-            </label>
-            <div className="form-grid">
-              <label>
-                Preço
-                <input value={newCatalogItem.price} onChange={(event) => setNewCatalogItem({ ...newCatalogItem, price: event.target.value })} />
-              </label>
-              <label>
-                Custo
-                <input value={newCatalogItem.cost} onChange={(event) => setNewCatalogItem({ ...newCatalogItem, cost: event.target.value })} />
-              </label>
+function Command({
+  state,
+  finance,
+  command,
+  setCommand,
+  handleCommand,
+  drafts,
+  pendingDraft,
+  aiState,
+  lastSaved,
+  confirmDraft,
+  confirmAllDrafts,
+  updateDraft,
+  updateDraftDate,
+  dismissDraft,
+  dismissPending,
+  listening,
+  voiceEnabled,
+  toggleVoice,
+  onVoice,
+  onClose,
+}) {
+  const mood = listening ? 'listening' : pendingDraft ? 'asking' : drafts.length ? 'ready' : command.trim() ? 'thinking' : aiState
+  const moodText = {
+    idle: 'pronta para ouvir',
+    listening: 'ouvindo voce',
+    thinking: 'entendendo sua fala',
+    asking: 'preciso de um detalhe',
+    ready: 'pronto para confirmar',
+    done: 'rota atualizada',
+  }[mood] || 'pronta para ouvir'
+
+  return (
+    <section className={`command-mode ai-${mood}`}>
+      <div className="command-controls">
+        <button type="button" onClick={toggleVoice}>
+          {voiceEnabled ? <Volume2 size={19} /> : <VolumeX size={19} />}
+          <span>{voiceEnabled ? 'voz ligada' : 'voz muda'}</span>
+        </button>
+        <button type="button" onClick={onClose}><X size={20} /></button>
+      </div>
+      <div className="jarvis-orb">
+        <span />
+        <span />
+        <span />
+        <Brain size={42} />
+        <small>{moodText}</small>
+      </div>
+      <div className="command-copy">
+        <p>Norte IA</p>
+        <h1>{state.person.name}, sua rota esta em {finance.score}%.</h1>
+        <span>Fale naturalmente. Eu separo pessoal e negocio, pergunto quando faltar dado e so salvo com confirmacao.</span>
+        <div className="ai-status">
+          <i />
+          <strong>{moodText}</strong>
+          <span>{drafts.length ? `${drafts.length} rascunho${drafts.length > 1 ? 's' : ''} aguardando sua decisao` : pendingDraft ? 'responda o detalhe que faltou para eu montar a proposta' : 'toque no microfone ou escreva como voce falaria com uma pessoa'}</span>
+        </div>
+        <div className="command-metrics">
+          <article>
+            <span>livre hoje</span>
+            <strong>{brl(finance.safeToSpend)}</strong>
+          </article>
+          <article>
+            <span>pessoal</span>
+            <strong>{brl(finance.byLedger.personal?.balance || 0)}</strong>
+          </article>
+          <article>
+            <span>negocio</span>
+            <strong>{brl(finance.byLedger.business?.balance || 0)}</strong>
+          </article>
+        </div>
+      </div>
+      <UnderstandingRail state={state} drafts={drafts} pendingDraft={pendingDraft} command={command} />
+      <div className="quick-prompts">
+        {['Quanto posso gastar?', 'Para onde meu dinheiro vai?', 'Quais contas vencem?', 'Recebi 300 de cliente'].map((item) => (
+          <button type="button" key={item} onClick={() => handleCommand(item)}>
+            {item}
+          </button>
+        ))}
+      </div>
+      {pendingDraft && (
+        <article className="pending-question">
+          <div>
+            <span>faltou um dado</span>
+            <strong>Qual foi o valor?</strong>
+            <p>
+              Eu entendi como {pendingDraft.ledger === 'business' ? 'negocio' : 'pessoal'} em {pendingDraft.category}.
+              Responda so o valor, ou diga algo como 120 amanha. Depois voce ajusta categoria e data antes de salvar.
+            </p>
+            <div className="pending-quick-values">
+              {[50, 100, 250, 500].map((value) => (
+                <button type="button" key={value} onClick={() => handleCommand(String(value))}>{brl(value)}</button>
+              ))}
             </div>
-            {showStock && (
-              <div className="form-grid">
+          </div>
+          <button type="button" onClick={dismissPending}>cancelar</button>
+        </article>
+      )}
+      <div className="command-bar">
+        <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Ex: vendi 300 no pix e paguei 70 de mercado" />
+        <button type="button" onClick={() => handleCommand()}><Send size={19} /></button>
+        <button type="button" className={listening ? 'listening' : ''} onClick={onVoice}><Mic size={19} /></button>
+      </div>
+      {!!drafts.length && (
+        <section className="draft-stack">
+          <div className="draft-head">
+            <span>{drafts.length} item{drafts.length > 1 ? 's' : ''} encontrado{drafts.length > 1 ? 's' : ''}</span>
+            <button type="button" onClick={confirmAllDrafts}><Check size={16} /> Confirmar tudo</button>
+          </div>
+          {drafts.map((draft) => (
+            <article className="proposal" key={draft.id}>
+              <div className="proposal-main">
+                <span>{draft.kind === 'obligation' ? 'Agenda' : 'Movimento'} sugerido</span>
+                <strong>{draft.title}</strong>
+                <b>{brl(draft.amount)}</b>
+              </div>
+              <div className="proposal-intelligence">
+                <span>{draft.ledger === 'business' ? 'Negocio' : 'Pessoal'}</span>
+                <span>{draft.type === 'income' ? 'Entrada' : 'Saida'}</span>
+                <span>{dateLabel(draft.kind === 'obligation' ? draft.due : draft.date)}</span>
+                <span>{Math.round(Number(draft.confidence || 0.82) * 100)}% de confianca</span>
+                <strong>{draftReason(draft)}</strong>
+                <small>{draftImpact(draft, finance)}</small>
+              </div>
+              <div className="proposal-quick-edit">
                 <label>
-                  Estoque
-                  <input value={newCatalogItem.stock} onChange={(event) => setNewCatalogItem({ ...newCatalogItem, stock: event.target.value })} />
+                  <span>descricao</span>
+                  <input value={draft.title} onChange={(event) => updateDraft(draft.id, { title: event.target.value })} />
                 </label>
                 <label>
-                  Mínimo
-                  <input value={newCatalogItem.minStock} onChange={(event) => setNewCatalogItem({ ...newCatalogItem, minStock: event.target.value })} />
+                  <span>valor</span>
+                  <input
+                    value={draft.amount || ''}
+                    inputMode="decimal"
+                    onChange={(event) => updateDraft(draft.id, { amount: parseMoney(event.target.value) })}
+                  />
+                </label>
+                <label>
+                  <span>{draft.kind === 'obligation' ? 'vencimento' : 'data'}</span>
+                  <input
+                    type="date"
+                    value={draft.kind === 'obligation' ? draft.due : draft.date}
+                    onChange={(event) => updateDraftDate(draft.id, event.target.value)}
+                  />
                 </label>
               </div>
-            )}
-            <button className="primary-action" type="submit">
-              <Plus size={18} />
-              Adicionar
-            </button>
-          </form>
+              <div className="proposal-controls">
+                <div className="mini-toggle">
+                  {['personal', 'business'].map((ledger) => (
+                    <button
+                      type="button"
+                      className={draft.ledger === ledger ? 'active' : ''}
+                      key={ledger}
+                      onClick={() => updateDraft(draft.id, { ledger })}
+                    >
+                      {ledger === 'business' ? 'Negocio' : 'Pessoal'}
+                    </button>
+                  ))}
+                </div>
+                <div className="mini-toggle">
+                  {['expense', 'income'].map((type) => (
+                    <button
+                      type="button"
+                      className={draft.type === type ? 'active' : ''}
+                      key={type}
+                      onClick={() => updateDraft(draft.id, { type })}
+                    >
+                      {type === 'income' ? 'Entrada' : 'Saida'}
+                    </button>
+                  ))}
+                </div>
+                <select value={draft.category} onChange={(event) => updateDraft(draft.id, { category: event.target.value })}>
+                  {draftCategories.map((category) => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                </select>
+                <div className="mini-toggle date-toggle">
+                  {[
+                    ['Hoje', today()],
+                    ['Amanha', addDays(1)],
+                    ['7 dias', addDays(7)],
+                  ].map(([label, date]) => (
+                    <button
+                      type="button"
+                      className={(draft.kind === 'obligation' ? draft.due : draft.date) === date ? 'active' : ''}
+                      key={label}
+                      onClick={() => updateDraft(draft.id, draft.kind === 'obligation' ? { due: date } : { date })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="proposal-actions">
+                <button type="button" onClick={() => confirmDraft(draft.id)}><Check size={17} /> Confirmar</button>
+                <button type="button" className="ghost-action" onClick={() => dismissDraft(draft.id)}><X size={17} /></button>
+              </div>
+            </article>
+          ))}
         </section>
+      )}
+      {!drafts.length && !pendingDraft && lastSaved && (
+        <article className="save-receipt">
+          <div>
+            <span>salvo na carteira</span>
+            <strong>{lastSaved.title}</strong>
+            <small>{lastSaved.ledger === 'business' ? 'Negocio' : 'Pessoal'} - {lastSaved.category}</small>
+            <em>{lastSaved.type === 'income' ? 'Sua rota recebeu uma entrada nova.' : 'Eu ja considerei essa saida no dinheiro livre.'}</em>
+          </div>
+          <b>{brl(lastSaved.amount)}</b>
+          <div className="receipt-actions">
+            <button type="button" onClick={onClose}>Ver carteira</button>
+            <button type="button" onClick={() => setCommand('')}>Registrar outro</button>
+          </div>
+        </article>
+      )}
+      <div className="assistant-thread">
+        {state.assistant.slice(0, 6).map((message) => (
+          <p className={message.role} key={message.id}>{message.text}</p>
+        ))}
       </div>
     </section>
   )
 }
 
-function ClientsView({ clients, newClient, setNewClient, saveClient, receiveClient, updateClient, deleteClient }) {
-  const pending = clients.filter((client) => Number(client.receivable || 0) > 0)
-  const active = clients.length
+function ActionSheet({ sheet, close, state, mutate, addEvent, addObligation }) {
+  const sheetType = typeof sheet === 'string' ? sheet : sheet?.type
+  const activeCard = sheetType === 'card' ? state.cards.find((card) => card.id === sheet.id) : null
+  const activeAccount = sheetType === 'account' ? state.accounts.find((account) => account.id === sheet.id) : null
+  const activeGoal = sheetType === 'goal-fund' ? state.goals.find((goal) => goal.id === sheet.id) : null
+  const activeCardHealth = activeCard ? getCardHealth(activeCard) : null
+  const activeCardEvents = activeCard ? state.events.filter((event) => event.cardId === activeCard.id).slice(0, 4) : []
+  const budgetRhythm = buildBudgetRhythm({ budgets: state.budgets, events: state.events, currentDate: today() })
+  const activeBudget = sheetType === 'budget' && sheet?.id ? budgetRhythm.find((item) => item.id === sheet.id) : null
+  const budgetSuggestion = suggestBudgetLimit(activeBudget)
+  const activePlan = getActivePlan(state.plan)
+  const usageRows = getPlanUsageRows(state)
+
+  function submitMoney(event) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const kind = form.get('kind')
+    const payload = {
+      title: form.get('title'),
+      amount: parseMoney(form.get('amount')),
+      ledger: form.get('ledger'),
+      category: form.get('category') || 'Geral',
+    }
+    if (!payload.title || !payload.amount) return
+    const automated = applyAutomation(payload, state)
+    if (kind === 'bill') addObligation({ ...automated, type: form.get('direction'), due: form.get('date') || today() })
+    else addEvent({ ...automated, type: kind, date: form.get('date') || today() })
+    close()
+  }
+
+  function submitGoal(event) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    mutate((current) => ({
+      ...current,
+      goals: [{ id: uid(), title: form.get('title'), target: parseMoney(form.get('target')), current: 0 }, ...current.goals],
+    }))
+    close()
+  }
+
+  function connectBank(bank) {
+    mutate((current) => {
+      const withoutBank = current.connections.filter((connection) => connection.id !== bank.id)
+      const accountId = `open-${bank.id}`
+      const accounts = current.accounts.some((account) => account.id === accountId)
+        ? current.accounts.map((account) => (account.id === accountId ? { ...account, balance: bank.balance } : account))
+        : [
+            ...current.accounts,
+            {
+              id: accountId,
+              ledger: bank.ledger,
+              name: bank.name,
+              kind: 'bank',
+              balance: bank.balance,
+              connected: true,
+            },
+          ]
+      return {
+        ...current,
+        accounts,
+        connections: [
+          {
+            ...bank,
+            status: 'ready',
+            lastSync: new Date().toISOString(),
+          },
+          ...withoutBank,
+        ],
+      }
+    })
+  }
+
+  function choosePlan(plan) {
+    mutate((current) => ({
+      ...current,
+      plan: {
+        id: plan.id,
+        tier: plan.name,
+        status: 'preview',
+        price: plan.price,
+        trialDays: current.plan?.trialDays || 14,
+      },
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: `${plan.name} selecionado. Quando conectarmos Stripe, esse botao vira checkout seguro e portal de assinatura.`,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+  }
+
+  function submitCardSpend(event) {
+    event.preventDefault()
+    if (!activeCard) return
+    const form = new FormData(event.currentTarget)
+    const amount = parseMoney(form.get('amount'))
+    const installments = Math.max(1, Math.min(24, Number(form.get('installments') || 1)))
+    if (!amount) return
+    mutate((current) => ({
+      ...current,
+      cards: current.cards.map((card) => (card.id === activeCard.id ? { ...card, used: Number(card.used || 0) + amount } : card)),
+      events: [
+        {
+          id: uid(),
+          title: form.get('title') || `Compra no ${activeCard.name}`,
+          ledger: activeCard.ledger,
+          type: 'expense',
+          amount,
+          category: form.get('category') || 'Cartao',
+          date: today(),
+          cardId: activeCard.id,
+          installments,
+          installmentAmount: amount / installments,
+        },
+        ...current.events,
+      ],
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: installments > 1
+            ? `${form.get('title') || activeCard.name} entrou em ${installments} parcelas de ${brl(amount / installments)}. Vou considerar isso no seu dinheiro livre.`
+            : `Compra de ${brl(amount)} no ${activeCard.name} registrada na fatura.`,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+    close()
+  }
+
+  function submitNewCard(event) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const name = String(form.get('name') || '').trim()
+    const limit = parseMoney(form.get('limit'))
+    if (!name || !limit) return
+    mutate((current) => ({
+      ...current,
+      cards: [
+        {
+          id: uid(),
+          name,
+          ledger: form.get('ledger'),
+          limit,
+          used: 0,
+          dueDay: Math.max(1, Math.min(31, Number(form.get('dueDay') || 10))),
+          issuer: 'Norte',
+          last4: String(Math.floor(1000 + Math.random() * 9000)),
+          tone: form.get('ledger') === 'business' ? 'violet' : 'graphite',
+        },
+        ...current.cards,
+      ],
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: `${name} entrou na carteira. A partir de agora eu considero limite e fatura antes de dizer quanto voce pode gastar.`,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+    close()
+  }
+
+  function submitAccountMove(event) {
+    event.preventDefault()
+    if (!activeAccount) return
+    const form = new FormData(event.currentTarget)
+    const amount = parseMoney(form.get('amount'))
+    const direction = form.get('direction')
+    if (!amount) return
+    const signedAmount = direction === 'out' ? -amount : amount
+    mutate((current) => ({
+      ...current,
+      accounts: current.accounts.map((account) =>
+        account.id === activeAccount.id ? { ...account, balance: Number(account.balance || 0) + signedAmount } : account,
+      ),
+      events: [
+        {
+          id: uid(),
+          title: form.get('title') || (direction === 'out' ? `Saida em ${activeAccount.name}` : `Entrada em ${activeAccount.name}`),
+          ledger: activeAccount.ledger,
+          type: direction === 'out' ? 'expense' : 'income',
+          amount,
+          category: form.get('category') || 'Carteira',
+          date: today(),
+          accountId: activeAccount.id,
+        },
+        ...current.events,
+      ],
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: `${activeAccount.name} atualizado com ${direction === 'out' ? 'saida' : 'entrada'} de ${brl(amount)}. Separei em ${activeAccount.ledger === 'business' ? 'Negocio' : 'Pessoal'}.`,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+    close()
+  }
+
+  function submitAutomation(event) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const keyword = String(form.get('keyword') || '').trim()
+    if (!keyword) return
+    mutate((current) => ({
+      ...current,
+      automations: [
+        {
+          id: uid(),
+          keyword,
+          ledger: form.get('ledger'),
+          category: form.get('category') || 'Geral',
+          enabled: true,
+        },
+        ...current.automations,
+      ],
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: `Regra criada. Quando voce falar "${keyword}", eu ja separo antes de pedir confirmacao.`,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+    close()
+  }
+
+  function submitRecurrence(event) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const title = String(form.get('title') || '').trim()
+    const amount = parseMoney(form.get('amount'))
+    if (!title || !amount) return
+    mutate((current) => ({
+      ...current,
+      recurrences: [
+        {
+          id: uid(),
+          title,
+          amount,
+          ledger: form.get('ledger'),
+          type: form.get('type'),
+          day: Math.max(1, Math.min(31, Number(form.get('day') || 1))),
+          category: form.get('category') || 'Conta fixa',
+          active: true,
+        },
+        ...current.recurrences,
+      ],
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: `${title} entrou nos fixos do mes. Agora eu considero isso antes de dizer quanto voce pode gastar.`,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+    close()
+  }
+
+  function submitBudget(event) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const category = String(form.get('category') || 'Geral')
+    const limit = parseMoney(form.get('limit'))
+    if (!limit) return
+    const nextBudget = {
+      id: activeBudget?.id || uid(),
+      ledger: form.get('ledger'),
+      category,
+      label: String(form.get('label') || category).trim() || category,
+      limit,
+    }
+    mutate((current) => ({
+      ...current,
+      budgets: activeBudget
+        ? current.budgets.map((budget) => (budget.id === activeBudget.id ? nextBudget : budget))
+        : [nextBudget, ...current.budgets],
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: `${nextBudget.label} agora tem limite de ${brl(limit)} no ${nextBudget.ledger === 'business' ? 'Negocio' : 'Pessoal'}. Vou avisar antes de voce passar do ponto.`,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+    close()
+  }
+
+  function payCard() {
+    if (!activeCard?.used) return
+    mutate((current) => ({
+      ...current,
+      cards: current.cards.map((card) => (card.id === activeCard.id ? { ...card, used: 0 } : card)),
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: `Fatura do ${activeCard.name} marcada como paga. Seu limite voltou e sua rota foi atualizada.`,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+    close()
+  }
+
+  function submitGoalFund(event) {
+    event.preventDefault()
+    if (!activeGoal) return
+    const form = new FormData(event.currentTarget)
+    const amount = parseMoney(form.get('amount'))
+    if (!amount) return
+    mutate((current) => ({
+      ...current,
+      goals: current.goals.map((goal) =>
+        goal.id === activeGoal.id ? { ...goal, current: Number(goal.current || 0) + amount } : goal,
+      ),
+      events: [
+        {
+          id: uid(),
+          title: `Aporte em ${activeGoal.title}`,
+          ledger: form.get('ledger') || 'personal',
+          type: 'expense',
+          amount,
+          category: 'Meta',
+          date: today(),
+        },
+        ...current.events,
+      ],
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: `Guardei ${brl(amount)} para ${activeGoal.title}. Isso deixa sua meta mais perto sem misturar com gasto comum.`,
+          at: new Date().toISOString(),
+        },
+        ...current.assistant,
+      ],
+    }))
+    close()
+  }
 
   return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Clientes e recebimentos</p>
-          <h2>Quem compra, quem deve e quem voltou</h2>
-        </div>
-      </div>
-
-      <div className="metric-grid">
-        <Metric title="Clientes" value={active} icon={Users} tone="blue" />
-        <Metric title="Com valor aberto" value={pending.length} icon={Bell} tone="amber" />
-        <Metric title="A receber" value={money(pending.reduce((acc, client) => acc + Number(client.receivable || 0), 0))} icon={ArrowUpRight} tone="green" />
-      </div>
-
-      <div className="content-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Lista de clientes</h3>
-            <Users size={18} />
-          </div>
-          <div className="catalog-list">
-            {clients.map((client) => (
-              <article key={client.id} className="editable-row">
-                <div className="form-grid">
-                  <label>
-                    Nome
-                    <input value={client.name} onChange={(event) => updateClient(client.id, { name: event.target.value })} />
-                  </label>
-                  <label>
-                    Telefone
-                    <input value={client.phone || ''} onChange={(event) => updateClient(client.id, { phone: event.target.value })} />
-                  </label>
-                  <label>
-                    A receber
-                    <input value={client.receivable} onChange={(event) => updateClient(client.id, { receivable: Number(event.target.value || 0) })} inputMode="decimal" />
-                  </label>
-                  <label>
-                    Vencimento
-                    <input type="date" value={client.due} onChange={(event) => updateClient(client.id, { due: event.target.value })} />
-                  </label>
-                </div>
-                <div className="catalog-actions">
-                  <span>{Number(client.receivable || 0) > 0 ? `${money(client.receivable)} em aberto` : 'em dia'}</span>
-                  <div className="row-actions">
-                    {Number(client.receivable || 0) > 0 && (
-                      <button type="button" onClick={() => receiveClient(client)} title="Receber">
-                        <Check size={18} />
-                      </button>
-                    )}
-                    <button type="button" onClick={() => deleteClient(client.id)} title="Excluir cliente">
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Novo cliente</h3>
-            <Plus size={18} />
-          </div>
-          <form className="stack-form" onSubmit={saveClient}>
-            <label>
-              Nome
-              <input value={newClient.name} onChange={(event) => setNewClient({ ...newClient, name: event.target.value })} placeholder="Ex: Maria Souza" />
-            </label>
-            <label>
-              Telefone
-              <input value={newClient.phone} onChange={(event) => setNewClient({ ...newClient, phone: event.target.value })} placeholder="WhatsApp do cliente" />
-            </label>
-            <div className="form-grid">
-              <label>
-                Valor a receber
-                <input value={newClient.receivable} onChange={(event) => setNewClient({ ...newClient, receivable: event.target.value })} placeholder="0,00" />
-              </label>
-              <label>
-                Vencimento
-                <input type="date" value={newClient.due} onChange={(event) => setNewClient({ ...newClient, due: event.target.value })} />
-              </label>
+    <div className="sheet-backdrop">
+      <section className="sheet">
+        <button className="sheet-close" type="button" onClick={close}><X size={18} /></button>
+        {sheetType === 'money' && (
+          <form onSubmit={submitMoney}>
+            <h2>Novo registro</h2>
+            <input name="title" placeholder="O que aconteceu?" />
+            <input name="amount" placeholder="Valor" inputMode="decimal" />
+            <select name="category" defaultValue="Geral">
+              <option value="Geral">Geral</option>
+              <option value="Vendas">Vendas</option>
+              <option value="Pix">Pix</option>
+              <option value="Mercado">Mercado</option>
+              <option value="Operacao">Operacao</option>
+              <option value="Conta fixa">Conta fixa</option>
+              <option value="Meta">Meta</option>
+            </select>
+            <select name="ledger" defaultValue="personal">
+              {state.ledgers.map((ledger) => <option value={ledger.id} key={ledger.id}>{ledger.name}</option>)}
+            </select>
+            <select name="kind" defaultValue="expense">
+              <option value="expense">Gasto agora</option>
+              <option value="income">Recebimento agora</option>
+              <option value="bill">Conta futura</option>
+            </select>
+            <select name="direction" defaultValue="payable">
+              <option value="payable">A pagar</option>
+              <option value="receivable">A receber</option>
+            </select>
+            <input name="date" type="date" defaultValue={today()} />
+            <button type="submit">Salvar</button>
+          </form>
+        )}
+        {sheetType === 'goal' && (
+          <form onSubmit={submitGoal}>
+            <h2>Nova meta</h2>
+            <input name="title" placeholder="Ex: reserva, viagem, equipamento" />
+            <input name="target" placeholder="Valor alvo" inputMode="decimal" />
+            <button type="submit">Criar meta</button>
+          </form>
+        )}
+        {sheetType === 'automation' && (
+          <form onSubmit={submitAutomation}>
+            <h2>Nova regra IA</h2>
+            <p>Ensine o Norte a separar sozinho antes de salvar.</p>
+            <input name="keyword" placeholder="Ex: cliente, mercado, fornecedor" />
+            <select name="ledger" defaultValue="business">
+              {state.ledgers.map((ledger) => <option value={ledger.id} key={ledger.id}>{ledger.name}</option>)}
+            </select>
+            <select name="category" defaultValue="Geral">
+              <option value="Vendas">Vendas</option>
+              <option value="Mercado">Mercado</option>
+              <option value="Operacao">Operacao</option>
+              <option value="Conta fixa">Conta fixa</option>
+              <option value="Marketing">Marketing</option>
+              <option value="Geral">Geral</option>
+            </select>
+            <button type="submit">Ativar regra</button>
+          </form>
+        )}
+        {sheetType === 'recurrence' && (
+          <form onSubmit={submitRecurrence}>
+            <h2>Novo fixo mensal</h2>
+            <p>Contas, assinaturas, fornecedores e recebimentos que voltam todo mes.</p>
+            <input name="title" placeholder="Ex: aluguel, internet, cliente mensal" />
+            <input name="amount" placeholder="Valor" inputMode="decimal" />
+            <input name="day" placeholder="Dia do mes" inputMode="numeric" />
+            <select name="ledger" defaultValue="personal">
+              {state.ledgers.map((ledger) => <option value={ledger.id} key={ledger.id}>{ledger.name}</option>)}
+            </select>
+            <select name="type" defaultValue="payable">
+              <option value="payable">Conta fixa</option>
+              <option value="receivable">Recebimento fixo</option>
+            </select>
+            <select name="category" defaultValue="Conta fixa">
+              <option value="Conta fixa">Conta fixa</option>
+              <option value="Assinatura">Assinatura</option>
+              <option value="Operacao">Operacao</option>
+              <option value="Vendas">Vendas</option>
+              <option value="Marketing">Marketing</option>
+            </select>
+            <button type="submit">Salvar fixo</button>
+          </form>
+        )}
+        {sheetType === 'budget' && (
+          <form className="budget-sheet" onSubmit={submitBudget}>
+            <h2>{activeBudget ? `Ajustar ${activeBudget.label}` : 'Novo limite vivo'}</h2>
+            <p>Escolha um ritmo confortavel. O Norte acompanha e te chama antes de virar problema.</p>
+            {activeBudget && (
+              <div className={`budget-sheet-preview ${activeBudget.tone}`}>
+                <span>{activeBudget.ledger === 'business' ? 'Negocio' : 'Pessoal'}</span>
+                <strong>{activeBudget.percent}% usado</strong>
+                <small>{brl(activeBudget.used)} usados de {brl(activeBudget.limit)}. Restam {brl(activeBudget.left)}.</small>
+                <div className="budget-bar"><i style={{ width: `${Math.min(100, activeBudget.percent)}%` }} /></div>
+              </div>
+            )}
+            <div className="ai-suggestion">
+              <Sparkles size={18} />
+              <span>
+                <strong>Sugestao Norte: {brl(budgetSuggestion)}</strong>
+                <small>{activeBudget ? 'calculei pelo uso atual com uma folga pequena' : 'bom ponto de partida para sentir o mes'}</small>
+              </span>
             </div>
-            <label>
-              Observação
-              <input value={newClient.notes} onChange={(event) => setNewClient({ ...newClient, notes: event.target.value })} placeholder="Serviço, projeto ou pedido" />
-            </label>
-            <button className="primary-action" type="submit">
-              <Plus size={18} />
-              Salvar cliente
-            </button>
+            <input name="label" placeholder="Nome do limite" defaultValue={activeBudget?.label || ''} />
+            <select name="ledger" defaultValue={activeBudget?.ledger || 'personal'}>
+              {state.ledgers.map((ledger) => <option value={ledger.id} key={ledger.id}>{ledger.name}</option>)}
+            </select>
+            <select name="category" defaultValue={activeBudget?.category || 'Mercado'}>
+              {[...new Set([...draftCategories, 'Marketing', 'Meta', 'Cartoes'])].map((category) => (
+                <option key={category} value={category}>{category}</option>
+              ))}
+            </select>
+            <input name="limit" placeholder="Limite do mes" inputMode="decimal" defaultValue={activeBudget?.limit || budgetSuggestion} />
+            <button type="submit">{activeBudget ? 'Atualizar limite' : 'Criar limite'}</button>
           </form>
-        </section>
-      </div>
-    </section>
-  )
-}
-
-function BillsView({ bills, totals, newBill, setNewBill, saveBill, payBill, deleteBill, updateBill }) {
-  const openBills = bills.filter((bill) => bill.status !== 'paid')
-  const todayDate = today()
-  const overdueBills = openBills.filter((bill) => bill.due < todayDate)
-  const dueTodayBills = openBills.filter((bill) => bill.due === todayDate)
-  const sorted = [...bills].sort((a, b) => `${a.due}`.localeCompare(`${b.due}`))
-
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Calendario financeiro</p>
-          <h2>Contas a pagar e receber</h2>
-        </div>
-      </div>
-
-      <div className="metric-grid">
-        <Metric title="A pagar" value={money(totals.billsPayable)} icon={ArrowDownRight} tone="red" />
-        <Metric title="A receber" value={money(totals.billsReceivable)} icon={ArrowUpRight} tone="green" />
-        <Metric title="Em aberto" value={openBills.length} icon={ClipboardList} tone="amber" />
-        <Metric title="Vencidas hoje" value={overdueBills.length + dueTodayBills.length} icon={AlertCircle} tone="red" />
-      </div>
-
-      <div className="content-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Agenda de contas</h3>
-            <Bell size={18} />
+        )}
+        {sheetType === 'connect' && (
+          <div className="sheet-stack">
+            <h2>Conexao bancaria</h2>
+            <p>Open Finance entra aqui depois. Agora voce ja pode sentir a carteira conectada e separada por pessoal ou negocio.</p>
+            <div className="bank-list">
+              {availableBanks.map((bank) => {
+                const connected = state.connections.some((item) => item.id === bank.id)
+                return (
+                  <button type="button" key={bank.id} onClick={() => connectBank(bank)} className={connected ? 'connected' : ''}>
+                    <Landmark size={18} />
+                    <span>
+                      <strong>{bank.name}</strong>
+                      <small>{bank.ledger === 'business' ? 'Conta do negocio' : 'Conta pessoal'} - {brl(bank.balance)}</small>
+                    </span>
+                    {connected ? <Check size={18} /> : <Plus size={18} />}
+                  </button>
+                )
+              })}
+            </div>
           </div>
-          <div className="catalog-list">
-            {sorted.length ? sorted.map((bill) => {
-              const billState = bill.status === 'paid' ? 'paid' : bill.due < todayDate ? 'overdue' : bill.due === todayDate ? 'today' : 'open'
-              return (
-              <article key={bill.id} className={`editable-row bill-editor ${billState}`}>
-                <div className="bill-status-line">
-                  <span className={`pill ${bill.type === 'receivable' ? 'income' : 'expense'}`}>
-                    {bill.type === 'receivable' ? 'Receber' : 'Pagar'}
+        )}
+        {sheetType === 'plans' && (
+          <div className="sheet-stack">
+            <h2>Assinatura Norte</h2>
+            <p>Planos mensais para evoluir de controle pessoal + negocio ate operacao financeira com IA.</p>
+            <div className="plan-current">
+              <div>
+                <span>plano ativo</span>
+                <strong>{activePlan.name}</strong>
+                <small>{activePlan.headline}</small>
+              </div>
+              <b>{brl(activePlan.price)}<small>{activePlan.billing}</small></b>
+            </div>
+            <div className="plan-list">
+              {plans.map((plan) => (
+                <button type="button" key={plan.id} onClick={() => choosePlan(plan)} className={state.plan.tier === plan.name ? 'selected' : ''}>
+                  <CreditCard size={18} />
+                  <span>
+                    <small>{plan.badge}</small>
+                    <strong>{plan.name}</strong>
+                    <small>{plan.text}</small>
+                    <em>{plan.features.join(' - ')}</em>
                   </span>
-                  <strong>
-                    {billState === 'paid'
-                      ? 'Concluída'
-                      : billState === 'overdue'
-                        ? 'Vencida'
-                        : billState === 'today'
-                          ? 'Vence hoje'
-                          : 'Aberta'}
-                  </strong>
-                </div>
-                <div className="form-grid">
-                  <label>
-                    Tipo
-                    <select value={bill.type} onChange={(event) => updateBill(bill.id, { type: event.target.value })}>
-                      <option value="payable">Pagar</option>
-                      <option value="receivable">Receber</option>
-                    </select>
-                  </label>
-                  <label>
-                    Descrição
-                    <input value={bill.title} onChange={(event) => updateBill(bill.id, { title: event.target.value })} />
-                  </label>
-                  <label>
-                    Valor
-                    <input value={bill.amount} onChange={(event) => updateBill(bill.id, { amount: parseAmountInput(event.target.value) })} inputMode="decimal" />
-                  </label>
-                  <label>
-                    Vencimento
-                    <input type="date" value={bill.due} onChange={(event) => updateBill(bill.id, { due: event.target.value })} />
-                  </label>
-                  <label>
-                    Área
-                    <select value={bill.scope} onChange={(event) => updateBill(bill.id, { scope: event.target.value })}>
-                      <option value="business">Negócio</option>
-                      <option value="personal">Pessoal</option>
-                    </select>
-                  </label>
-                  <label>
-                    Status
-                    <select value={bill.status} onChange={(event) => updateBill(bill.id, { status: event.target.value })}>
-                      <option value="open">Aberta</option>
-                      <option value="paid">Paga/recebida</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="catalog-actions">
-                  <span>{bill.type === 'receivable' ? 'Receber' : 'Pagar'} {money(bill.amount)}</span>
-                  <div className="row-actions">
-                    {bill.status !== 'paid' && (
-                      <button type="button" onClick={() => payBill(bill)} title={bill.type === 'receivable' ? 'Marcar recebido' : 'Marcar pago'}>
-                        <Check size={18} />
-                      </button>
-                    )}
-                    <button type="button" onClick={() => deleteBill(bill.id)} title="Excluir conta">
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </div>
-              </article>
-            )}) : (
-              <p className="empty-state">Nenhuma conta cadastrada ainda.</p>
-            )}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Nova conta</h3>
-            <Plus size={18} />
-          </div>
-          <form className="stack-form" onSubmit={saveBill}>
-            <div className="segmented">
-              {['payable', 'receivable'].map((type) => (
-                <button key={type} className={newBill.type === type ? 'selected' : ''} type="button" onClick={() => setNewBill({ ...newBill, type })}>
-                  {type === 'payable' ? 'Pagar' : 'Receber'}
+                  <b>{brl(plan.price)}<small>{plan.billing}</small></b>
                 </button>
               ))}
             </div>
-            <label>
-              Descrição
-              <input value={newBill.title} onChange={(event) => setNewBill({ ...newBill, title: event.target.value })} placeholder="Ex: Aluguel, cliente Ana" />
-            </label>
-            <div className="form-grid">
-              <label>
-                Valor
-                <input value={newBill.amount} onChange={(event) => setNewBill({ ...newBill, amount: event.target.value })} placeholder="0,00" />
-              </label>
-              <label>
-                Vencimento
-                <input type="date" value={newBill.due} onChange={(event) => setNewBill({ ...newBill, due: event.target.value })} />
-              </label>
-              <label>
-                Área
-                <select value={newBill.scope} onChange={(event) => setNewBill({ ...newBill, scope: event.target.value })}>
-                  <option value="business">Negócio</option>
-                  <option value="personal">Pessoal</option>
-                </select>
-              </label>
-              <label>
-                Categoria
-                <select value={newBill.category} onChange={(event) => setNewBill({ ...newBill, category: event.target.value })}>
-                  {[...categories.expense, ...categories.income].map((category) => (
-                    <option key={category}>{category}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <button className="primary-action" type="submit">
-              <Plus size={18} />
-              Salvar conta
-            </button>
-          </form>
-        </section>
-      </div>
-    </section>
-  )
-}
-
-function PersonalView({
-  totals,
-  accountBalances,
-  transactions,
-  newAccount,
-  setNewAccount,
-  saveAccount,
-  updateAccount,
-  deleteAccount,
-  onDelete,
-  onUpdate,
-  accounts,
-}) {
-  const [filters, setFilters] = useState({ scope: 'all', type: 'all', text: '' })
-  const filteredTransactions = transactions.filter((item) => {
-    const matchesScope = filters.scope === 'all' || item.scope === filters.scope
-    const matchesType = filters.type === 'all' || item.type === filters.type
-    const text = normalizeText(`${item.title} ${item.category} ${item.note || ''}`)
-    const matchesText = !filters.text || text.includes(normalizeText(filters.text))
-    return matchesScope && matchesType && matchesText
-  })
-
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Vida pessoal sem misturar com o caixa</p>
-          <h2>Seu dinheiro pessoal</h2>
-        </div>
-      </div>
-
-      <div className="metric-grid">
-        <Metric title="Entradas pessoais" value={money(totals.personalIncome)} icon={ArrowUpRight} tone="green" />
-        <Metric title="Gastos pessoais" value={money(totals.personalExpense)} icon={ArrowDownRight} tone="red" />
-        <Metric
-          title="Disponível"
-          value={money(accountBalances.filter((account) => account.scope !== 'business').reduce((acc, account) => acc + account.current, 0))}
-          icon={Wallet}
-          tone="blue"
-        />
-      </div>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <h3>Histórico</h3>
-          <Calendar size={18} />
-        </div>
-        <div className="filter-bar">
-          <input value={filters.text} onChange={(event) => setFilters({ ...filters, text: event.target.value })} placeholder="Buscar por descrição ou categoria" />
-          <select value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })}>
-            <option value="all">Todas as áreas</option>
-            <option value="business">Negócio</option>
-            <option value="personal">Pessoal</option>
-          </select>
-          <select value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}>
-            <option value="all">Todos os tipos</option>
-            <option value="income">Entradas</option>
-            <option value="expense">Saídas</option>
-            <option value="transfer">Transferências</option>
-          </select>
-        </div>
-        <TransactionList items={filteredTransactions} accounts={accounts} onUpdate={onUpdate} onDelete={onDelete} />
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <h3>Contas e carteiras</h3>
-          <Landmark size={18} />
-        </div>
-        <div className="account-grid">
-          {accountBalances.map((account) => (
-            <article key={account.id} className="account-card">
-              <label>
-                Nome
-                <input value={account.name} onChange={(event) => updateAccount(account.id, { name: event.target.value })} />
-              </label>
-              <label>
-                Área
-                <select value={account.scope} onChange={(event) => updateAccount(account.id, { scope: event.target.value })}>
-                  <option value="business">Negócio</option>
-                  <option value="personal">Pessoal</option>
-                  <option value="both">Ambos</option>
-                </select>
-              </label>
-              <p>{money(account.current)}</p>
-              <button className="mini-action" type="button" onClick={() => deleteAccount(account.id)}>
-                Excluir
-              </button>
-            </article>
-          ))}
-        </div>
-        <form className="manual-form inline-form" onSubmit={saveAccount}>
-          <div className="form-grid">
-            <label>
-              Nome da conta
-              <input value={newAccount.name} onChange={(event) => setNewAccount({ ...newAccount, name: event.target.value })} placeholder="Ex: Nubank, caixa físico" />
-            </label>
-            <label>
-              Saldo inicial
-              <input value={newAccount.balance} onChange={(event) => setNewAccount({ ...newAccount, balance: event.target.value })} placeholder="0,00" />
-            </label>
-            <label>
-              Área
-              <select value={newAccount.scope} onChange={(event) => setNewAccount({ ...newAccount, scope: event.target.value })}>
-                <option value="business">Negócio</option>
-                <option value="personal">Pessoal</option>
-                <option value="both">Ambos</option>
-              </select>
-            </label>
-            <label>
-              Tipo
-              <select value={newAccount.type} onChange={(event) => setNewAccount({ ...newAccount, type: event.target.value })}>
-                <option value="cash">Dinheiro</option>
-                <option value="bank">Banco</option>
-                <option value="card">Cartão</option>
-                <option value="reserve">Reserva</option>
-              </select>
-            </label>
-          </div>
-          <button className="primary-action" type="submit">
-            <Plus size={18} />
-            Adicionar conta
-          </button>
-        </form>
-      </section>
-    </section>
-  )
-}
-
-function ReportsView({ data, totals, accountBalances, lowStock }) {
-  const byCategory = data.transactions.reduce((acc, item) => {
-    const key = item.category || 'Outros'
-    acc[key] = (acc[key] || 0) + Number(item.amount || 0)
-    return acc
-  }, {})
-  const topCategories = Object.entries(byCategory)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-  const profit = totals.businessIncome - totals.businessExpense
-  const personalNet = totals.personalIncome - totals.personalExpense
-  const totalBalance = accountBalances.reduce((acc, account) => acc + account.current, 0)
-  const openReceivables = totals.billsReceivable + totals.receivable
-  const reportInsights = [
-    {
-      tone: profit >= 0 ? 'success' : 'warning',
-      icon: TrendingUp,
-      title: profit >= 0 ? 'O negocio esta positivo.' : 'O negocio precisa de atencao.',
-      text:
-        profit >= 0
-          ? `Entradas superam saidas em ${money(profit)} no periodo registrado.`
-          : `Saidas superam entradas em ${money(Math.abs(profit))}. Reveja custos e contas abertas.`,
-    },
-    {
-      tone: openReceivables > totals.billsPayable ? 'success' : 'warning',
-      icon: Calendar,
-      title: openReceivables > totals.billsPayable ? 'Recebimentos cobrem contas abertas.' : 'Contas abertas merecem prioridade.',
-      text: `A receber: ${money(openReceivables)}. A pagar: ${money(totals.billsPayable)}.`,
-    },
-    {
-      tone: lowStock.length ? 'warning' : 'success',
-      icon: Package,
-      title: lowStock.length ? 'Ha itens perto de acabar.' : 'Estoque sem alerta critico.',
-      text: lowStock.length ? `${lowStock[0].name} e o primeiro item para revisar.` : 'Nenhum item esta abaixo do minimo cadastrado.',
-    },
-  ]
-  const now = new Date(`${today()}T12:00:00`)
-  const cashflow = data.bills
-    .filter((bill) => bill.status !== 'paid')
-    .map((bill) => ({ ...bill, date: new Date(`${bill.due}T12:00:00`) }))
-    .filter((bill) => {
-      const diffDays = (bill.date - now) / 86400000
-      return diffDays >= 0 && diffDays <= 30
-    })
-    .sort((a, b) => a.date - b.date)
-    .reduce(
-      (acc, bill) => {
-        const projectedBalance =
-          acc.balance + (bill.type === 'receivable' ? Number(bill.amount || 0) : -Number(bill.amount || 0))
-        return {
-          balance: projectedBalance,
-          items: [...acc.items, { ...bill, projectedBalance }],
-        }
-      },
-      { balance: totalBalance, items: [] },
-    ).items
-
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Relatorio simples</p>
-          <h2>O que mudou no seu dinheiro</h2>
-        </div>
-      </div>
-
-      <div className="metric-grid">
-        <Metric title="Lucro estimado" value={money(profit)} icon={TrendingUp} tone={profit >= 0 ? 'green' : 'red'} />
-        <Metric title="Resultado pessoal" value={money(personalNet)} icon={Wallet} tone={personalNet >= 0 ? 'green' : 'red'} />
-        <Metric title="Saldo total" value={money(totalBalance)} icon={Landmark} tone="blue" />
-        <Metric title="Estoque critico" value={lowStock.length} icon={Package} tone="amber" />
-      </div>
-
-      <div className="insight-grid">
-        {reportInsights.map((insight) => {
-          const Icon = insight.icon
-          return (
-            <article className={`insight-card ${insight.tone}`} key={insight.title}>
-              <Icon size={20} />
-              <div>
-                <strong>{insight.title}</strong>
-                <span>{insight.text}</span>
+            <div className="plan-usage">
+              <div className="usage-title">
+                <span>Uso do mes</span>
+                <strong>Limites do {activePlan.name}</strong>
               </div>
-            </article>
-          )
-        })}
-      </div>
-
-      <div className="content-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Leitura do mes</h3>
-            <FileText size={18} />
-          </div>
-          <div className="report-copy">
-            <p>
-              Seu negocio faturou <strong>{money(totals.businessIncome)}</strong> e teve <strong>{money(totals.businessExpense)}</strong> em custos e despesas.
-            </p>
-            <p>
-              Existem <strong>{money(totals.billsPayable)}</strong> em contas abertas para pagar e <strong>{money(totals.billsReceivable + totals.receivable)}</strong> para receber.
-            </p>
-            <p>
-              {lowStock.length
-                ? `${lowStock[0].name} merece atencao antes de aceitar mais demanda.`
-                : 'Nenhum item esta abaixo do minimo cadastrado agora.'}
-            </p>
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Maiores categorias</h3>
-            <BarChart3 size={18} />
-          </div>
-          <div className="category-bars">
-            {topCategories.length ? (
-              topCategories.map(([category, value]) => {
-                const max = topCategories[0]?.[1] || 1
+              {usageRows.map((row) => {
+                const unlimited = row.limit === 'unlimited'
+                const percent = unlimited ? 34 : Math.min(100, Math.round((row.used / Math.max(1, row.limit)) * 100))
                 return (
-                  <div key={category} className="category-row">
-                    <div>
-                      <strong>{category}</strong>
-                      <span>{money(value)}</span>
-                    </div>
-                    <div className="progress-bar">
-                      <span style={{ width: `${Math.max(8, (value / max) * 100)}%` }} />
-                    </div>
+                  <div className="usage-row" key={row.id}>
+                    <span>{row.label}</span>
+                    <b>{row.used} / {planFormat(row.limit)}</b>
+                    <div className={unlimited ? 'usage-bar unlimited' : 'usage-bar'}><i style={{ width: `${percent}%` }} /></div>
                   </div>
                 )
-              })
-            ) : (
-              <p className="empty-state">As maiores categorias aparecem depois dos primeiros lancamentos.</p>
+              })}
+            </div>
+            <div className="plan-proof">
+              <CalendarClock size={18} />
+              <span>Stripe-ready: checkout, trial, upgrade/downgrade e portal do cliente entram aqui. Hoje a escolha fica simulada e salva no estado do app.</span>
+            </div>
+          </div>
+        )}
+        {sheetType === 'account' && activeAccount && (
+          <div className="sheet-stack">
+            <h2>{activeAccount.name}</h2>
+            <div className={`account-detail ${activeAccount.ledger}`}>
+              <span>{activeAccount.ledger === 'business' ? 'Carteira do negocio' : 'Carteira pessoal'}</span>
+              <strong>{brl(activeAccount.balance)}</strong>
+              <small>{activeAccount.connected ? 'conectada para Open Finance' : 'controlada manualmente pelo Norte'}</small>
+            </div>
+            <form className="account-actions" onSubmit={submitAccountMove}>
+              <input name="title" placeholder="Descricao rapida" />
+              <input name="amount" placeholder="Valor" inputMode="decimal" />
+              <select name="direction" defaultValue="in">
+                <option value="in">Entrada</option>
+                <option value="out">Saida</option>
+              </select>
+              <select name="category" defaultValue="Carteira">
+                <option value="Carteira">Carteira</option>
+                <option value="Pix">Pix</option>
+                <option value="Vendas">Vendas</option>
+                <option value="Mercado">Mercado</option>
+                <option value="Operacao">Operacao</option>
+              </select>
+              <button type="submit">Atualizar saldo</button>
+            </form>
+          </div>
+        )}
+        {sheetType === 'new-card' && (
+          <form onSubmit={submitNewCard}>
+            <h2>Novo cartao</h2>
+            <p>Crie um cartao para acompanhar limite, fatura e compras parceladas.</p>
+            <input name="name" placeholder="Nome do cartao" />
+            <input name="limit" placeholder="Limite" inputMode="decimal" />
+            <input name="dueDay" placeholder="Dia de vencimento" inputMode="numeric" />
+            <select name="ledger" defaultValue="personal">
+              {state.ledgers.map((ledger) => <option value={ledger.id} key={ledger.id}>{ledger.name}</option>)}
+            </select>
+            <button type="submit">Adicionar cartao</button>
+          </form>
+        )}
+        {sheetType === 'card' && activeCard && (
+          <div className="sheet-stack">
+            <h2>{activeCard.name}</h2>
+            <div className={`card-detail tone-${activeCard.tone} card-${activeCardHealth.tone}`}>
+              <span>{activeCard.ledger === 'business' ? 'Cartao do negocio' : 'Cartao pessoal'}</span>
+              <strong>{brl(activeCardHealth.free)} livre</strong>
+              <small>Fatura atual: {brl(activeCardHealth.used)} - vence {dateLabel(activeCardHealth.due)}</small>
+              <div className="card-health-grid">
+                <span>{activeCardHealth.usedPercent}% usado</span>
+                <span>{activeCardHealth.daysToDue} dia{activeCardHealth.daysToDue === 1 ? '' : 's'} para vencer</span>
+                <span>{brl(activeCardHealth.limit)} limite</span>
+              </div>
+              <div className="limit-meter"><i style={{ width: `${Math.min(100, activeCardHealth.usedPercent)}%` }} /></div>
+            </div>
+            <div className="card-impact">
+              <CreditCard size={18} />
+              <span>
+                <strong>{activeCardHealth.tone === 'danger' ? 'Fatura pesada para a rota' : activeCardHealth.tone === 'warning' ? 'Cartao merece atencao' : 'Cartao sob controle'}</strong>
+                <small>{brl(activeCardHealth.used)} ja entra no dinheiro reservado antes do Norte dizer quanto voce pode gastar.</small>
+              </span>
+            </div>
+            <form onSubmit={submitCardSpend}>
+              <input name="title" placeholder="Compra rapida no cartao" />
+              <input name="amount" placeholder="Valor" inputMode="decimal" />
+              <select name="installments" defaultValue="1">
+                <option value="1">A vista</option>
+                <option value="2">2 parcelas</option>
+                <option value="3">3 parcelas</option>
+                <option value="6">6 parcelas</option>
+                <option value="10">10 parcelas</option>
+                <option value="12">12 parcelas</option>
+              </select>
+              <select name="category" defaultValue="Cartao">
+                <option value="Cartao">Cartao</option>
+                <option value="Mercado">Mercado</option>
+                <option value="Operacao">Operacao</option>
+                <option value="Marketing">Marketing</option>
+                <option value="Transporte">Transporte</option>
+              </select>
+              <button type="submit">Adicionar compra</button>
+            </form>
+            <button className="secondary-sheet-action" type="button" onClick={payCard} disabled={!activeCard.used}>
+              Marcar fatura como paga
+            </button>
+            {!!activeCardEvents.length && (
+              <div className="card-events">
+                <span>ultimas compras</span>
+                {activeCardEvents.map((event) => (
+                  <article key={event.id}>
+                    <strong>{event.title}</strong>
+                    <small>{event.category} - {dateLabel(event.date)}</small>
+                    <b>{brl(event.amount)}</b>
+                  </article>
+                ))}
+              </div>
             )}
           </div>
-        </section>
-      </div>
+        )}
+        {sheetType === 'goal-fund' && activeGoal && (
+          <form onSubmit={submitGoalFund}>
+            <h2>Guardar em {activeGoal.title}</h2>
+            <p>{brl(activeGoal.current || 0)} guardado de {brl(activeGoal.target)}.</p>
+            <input name="amount" placeholder="Quanto guardar agora?" inputMode="decimal" />
+            <select name="ledger" defaultValue="personal">
+              {state.ledgers.map((ledger) => <option value={ledger.id} key={ledger.id}>{ledger.name}</option>)}
+            </select>
+            <button type="submit">Guardar dinheiro</button>
+          </form>
+        )}
+      </section>
+    </div>
+  )
+}
 
-      <section className="panel">
-        <div className="panel-heading">
-          <h3>Próximos 30 dias</h3>
-          <Calendar size={18} />
+function Onboarding({ onDone }) {
+  function submit(event) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    onDone({
+      ...defaultState,
+      onboarded: true,
+      person: {
+        name: form.get('name') || 'Voce',
+        workName: form.get('workName') || 'Meu negocio',
+        mode: 'hybrid',
+        profile: form.get('profile') || 'mei',
+        pain: form.get('pain') || 'mixing',
+      },
+      accounts: defaultState.accounts.map((account) => ({
+        ...account,
+        balance: account.ledger === 'personal' ? parseMoney(form.get('personal')) : parseMoney(form.get('business')),
+      })),
+      assistant: [
+        {
+          id: uid(),
+          role: 'norte',
+          text: `Pronto, ${form.get('name') || 'Voce'}. Vou separar pessoal e negocio, perguntar quando faltar dado e te mostrar quanto pode gastar antes de voce se enrolar.`,
+          at: new Date().toISOString(),
+        },
+        ...defaultState.assistant,
+      ],
+    })
+  }
+  return (
+    <main className="zero-onboarding">
+      <section className="onboarding-story">
+        <Brand sync="ready" />
+        <div className="onboarding-copy">
+          <p>fintech pessoal + negocio</p>
+          <h1>Seu dinheiro em uma experiencia so. Separado pela IA.</h1>
+          <span>O Norte nasceu para quem nao consegue manter app financeiro por mais de uma semana.</span>
         </div>
-        <div className="cashflow-list">
-          {cashflow.length ? (
-            cashflow.map((bill) => (
-              <article key={bill.id} className="cashflow-item">
-                <div>
-                  <strong>{bill.title}</strong>
-                  <span>{bill.type === 'receivable' ? 'Entrada prevista' : 'Saída prevista'} • {bill.date.toLocaleDateString('pt-BR')}</span>
-                </div>
-                <strong className={bill.type === 'receivable' ? 'positive' : 'negative'}>
-                  {bill.type === 'receivable' ? '+' : '-'}
-                  {money(bill.amount)}
-                </strong>
-                <span>Saldo projetado: {money(bill.projectedBalance)}</span>
-              </article>
-            ))
-          ) : (
-            <p className="empty-state">Nenhuma conta aberta nos próximos 30 dias.</p>
-          )}
+        <div className="onboarding-preview">
+          <div className="preview-card preview-card-main">
+            <small>Carteira Norte</small>
+            <strong>pessoal + negocio</strong>
+            <span>IA separando cada movimento antes de salvar</span>
+          </div>
+          <div className="preview-card preview-card-side">
+            <small>Bussola</small>
+            <strong>82%</strong>
+            <span>quase no norte</span>
+          </div>
         </div>
       </section>
-    </section>
+      <form className="onboarding-panel" onSubmit={submit}>
+        <div className="setup-head">
+          <span>setup em 40 segundos</span>
+          <h2>Monte sua primeira carteira.</h2>
+          <p>A IA ja entra sabendo que voce tem duas vidas financeiras: a sua e a do seu trabalho.</p>
+        </div>
+        <div className="setup-grid">
+          <label>
+            <span>como devo te chamar?</span>
+            <input name="name" placeholder="Seu nome" />
+          </label>
+          <label>
+            <span>qual e o nome do seu trabalho?</span>
+            <input name="workName" placeholder="Nome do negocio ou trabalho" />
+          </label>
+          <fieldset className="setup-choice-group">
+            <legend>qual e sua fase?</legend>
+            <div className="setup-choice-grid">
+              {[
+                ['mei', 'MEI'],
+                ['freelancer', 'Freela'],
+                ['autonomo', 'Autonomo'],
+                ['extra', 'Renda extra'],
+              ].map(([value, label], index) => (
+                <label key={value}>
+                  <input type="radio" name="profile" value={value} defaultChecked={index === 0} />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset className="setup-choice-group">
+            <legend>o que mais te atrapalha?</legend>
+            <div className="setup-choice-grid pain-grid">
+              {[
+                ['mixing', 'Misturo pessoal e negocio'],
+                ['focus', 'Nao consigo manter app'],
+                ['bills', 'Esqueco contas'],
+                ['spend', 'Nao sei quanto posso gastar'],
+              ].map(([value, label], index) => (
+                <label key={value}>
+                  <input type="radio" name="pain" value={value} defaultChecked={index === 0} />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <label>
+            <span>saldo pessoal agora</span>
+            <input name="personal" placeholder="Ex: 1200" inputMode="decimal" />
+          </label>
+          <label>
+            <span>saldo do negocio agora</span>
+            <input name="business" placeholder="Ex: 3500" inputMode="decimal" />
+          </label>
+        </div>
+        <div className="setup-proof">
+          <span>Depois disso voce pode falar: "recebi 300 de cliente" ou "paguei mercado 80".</span>
+        </div>
+        <button type="submit">Entrar no Norte <ChevronRight size={18} /></button>
+      </form>
+    </main>
   )
 }
 
-function SettingsView({ data, exportBackup, importBackup, resetAppData }) {
-  const currentProfile = profileOptions.find((item) => item.id === data.user.profile)
+function Auth({ onDemo }) {
+  const [mode, setMode] = useState('login')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
 
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Controle e seguranca</p>
-          <h2>Ajustes do app</h2>
-        </div>
-      </div>
+  async function submit(event) {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+    try {
+      if (mode === 'login') await loginWithEmail(email, password)
+      else await registerWithEmail(email, password)
+    } catch {
+      setMessage('Nao consegui entrar. Confira os dados e tente de novo.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
-      <section className="plan-panel">
-        <div>
-          <p className="eyebrow">Conta e plano</p>
-          <h3>Norte Beta</h3>
-          <span>Uso liberado para testes reais enquanto a cobranca nao esta ativa.</span>
-        </div>
-        <div className="plan-badges">
-          <span>Workspace individual</span>
-          <span>Firebase ativo</span>
-          <span>Dados isolados</span>
-        </div>
-      </section>
-
-      <div className="content-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Backup local</h3>
-            <Download size={18} />
-          </div>
-          <div className="settings-actions">
-            <button className="primary-action" type="button" onClick={exportBackup}>
-              <Download size={18} />
-              Exportar dados
-            </button>
-            <label className="file-action">
-              <span>Importar backup</span>
-              <input type="file" accept="application/json" onChange={importBackup} />
-            </label>
-            <button className="danger-action" type="button" onClick={resetAppData}>
-              <RotateCcw size={18} />
-              Reiniciar dados
-            </button>
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Estado atual</h3>
-            <Settings size={18} />
-          </div>
-          <div className="settings-summary">
-            <p><strong>Usuario:</strong> {data.user.name}</p>
-            <p><strong>Negocio:</strong> {data.user.businessName}</p>
-            <p><strong>Perfil:</strong> {currentProfile?.label}</p>
-            <p><strong>Plano:</strong> Norte Beta</p>
-            <p><strong>Movimentos:</strong> {data.transactions.length}</p>
-            <p><strong>Itens de operacao:</strong> {data.catalog.length}</p>
-          </div>
-        </section>
-      </div>
-    </section>
-  )
-}
-
-function GoalsView({ goals, newGoal, setNewGoal, saveGoal, goalDrafts, setGoalDrafts, contributeToGoal }) {
-  return (
-    <section className="screen">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">Metas que viram rotina</p>
-          <h2>Objetivos financeiros</h2>
-        </div>
-      </div>
-
-      <div className="goal-grid">
-        {goals.map((goal) => {
-          const progress = Math.min(100, (Number(goal.current || 0) / Number(goal.target || 1)) * 100)
-          return (
-            <article className="goal-card" key={goal.id}>
-              <div className="goal-top">
-                <strong>{goal.title}</strong>
-                <span>{goal.scope === 'business' ? 'Negócio' : 'Pessoal'}</span>
-              </div>
-              <div className="progress-bar">
-                <span style={{ width: `${progress}%` }} />
-              </div>
-              <p>
-                {money(goal.current)} de {money(goal.target)} até {new Date(goal.due).toLocaleDateString('pt-BR')}
-              </p>
-              <div className="goal-contribution">
-                <input
-                  value={goalDrafts[goal.id] || ''}
-                  onChange={(event) => setGoalDrafts((current) => ({ ...current, [goal.id]: event.target.value }))}
-                  placeholder="Aporte"
-                  inputMode="decimal"
-                />
-                <button type="button" className="mini-action" onClick={() => contributeToGoal(goal)}>
-                  Adicionar
-                </button>
-              </div>
-            </article>
-          )
-        })}
-      </div>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <h3>Criar meta</h3>
-          <Target size={18} />
-        </div>
-        <form className="manual-form" onSubmit={saveGoal}>
-          <div className="form-grid">
-            <label>
-              Nome da meta
-              <input value={newGoal.title} onChange={(event) => setNewGoal({ ...newGoal, title: event.target.value })} placeholder="Ex: Comprar equipamento" />
-            </label>
-            <label>
-              Valor
-              <input value={newGoal.target} onChange={(event) => setNewGoal({ ...newGoal, target: event.target.value })} placeholder="0,00" />
-            </label>
-            <label>
-              Prazo
-              <input type="date" value={newGoal.due} onChange={(event) => setNewGoal({ ...newGoal, due: event.target.value })} />
-            </label>
-          </div>
-          <button className="primary-action" type="submit">
-            <Plus size={18} />
-            Criar meta
-          </button>
-        </form>
-      </section>
-    </section>
-  )
-}
-
-function Metric({ title, value, icon: Icon, tone }) {
-  return (
-    <article className={`metric ${tone}`}>
-      <div className="metric-icon">
-        <Icon size={20} />
-      </div>
-      <span>{title}</span>
-      <strong>{value}</strong>
-    </article>
-  )
-}
-
-function TransactionList({ items, compact = false, onDelete, onUpdate, accounts = [] }) {
-  const [editingId, setEditingId] = useState(null)
-
-  if (!items.length) {
-    return <p className="empty-state">Nenhum movimento ainda. Registre por voz, texto ou formulário.</p>
+  async function recover() {
+    try {
+      await resetFirebasePassword(email)
+      setMessage('Link de recuperacao enviado.')
+    } catch {
+      setMessage('Digite seu email para recuperar.')
+    }
   }
 
   return (
-    <div className={`transaction-list ${compact ? 'compact' : ''}`}>
-      {items.map((item) => (
-        <article key={item.id} className="transaction-item">
-          <div className={`transaction-icon ${item.type}`}>
-            {item.type === 'income' ? <ArrowUpRight size={18} /> : item.type === 'expense' ? <ArrowDownRight size={18} /> : <CreditCard size={18} />}
-          </div>
-          {editingId === item.id && onUpdate ? (
-            <div className="transaction-editor">
-              <div className="form-grid">
-                <label>
-                  Descrição
-                  <input value={item.title} onChange={(event) => onUpdate(item.id, { title: event.target.value, itemName: event.target.value })} />
-                </label>
-                <label>
-                  Valor
-                  <input value={item.amount} onChange={(event) => onUpdate(item.id, { amount: Number(event.target.value || 0) })} inputMode="decimal" />
-                </label>
-                <label>
-                  Tipo
-                  <select value={item.type} onChange={(event) => onUpdate(item.id, { type: event.target.value })}>
-                    <option value="income">Entrada</option>
-                    <option value="expense">Saída</option>
-                    <option value="transfer">Transferência</option>
-                  </select>
-                </label>
-                <label>
-                  Área
-                  <select
-                    value={item.scope}
-                    onChange={(event) => {
-                      const scope = event.target.value
-                      onUpdate(item.id, { scope, accountId: getDefaultAccountId(accounts, scope) })
-                    }}
-                  >
-                    <option value="business">Negócio</option>
-                    <option value="personal">Pessoal</option>
-                  </select>
-                </label>
-                <label>
-                  Conta
-                  <select value={item.accountId} onChange={(event) => onUpdate(item.id, { accountId: event.target.value })}>
-                    {getAccountOptions(accounts, item.scope).map((account) => (
-                      <option key={account.id} value={account.id}>
-                        {account.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Data
-                  <input type="date" value={item.date} onChange={(event) => onUpdate(item.id, { date: event.target.value })} />
-                </label>
-              </div>
-              <div className="row-actions">
-                <button type="button" onClick={() => setEditingId(null)} title="Concluir edição">
-                  <Check size={18} />
-                </button>
-                {onDelete && (
-                  <button type="button" onClick={() => onDelete(item.id)} title="Excluir lançamento">
-                    <Trash2 size={18} />
-                  </button>
-                )}
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="transaction-main">
-                <strong>{item.title}</strong>
-                <span>
-                  {item.category} • {item.scope === 'business' ? 'Negócio' : 'Pessoal'} •{' '}
-                  {new Date(`${item.date}T12:00:00`).toLocaleDateString('pt-BR')}
-                </span>
-              </div>
-              <strong className={item.type === 'income' ? 'positive' : item.type === 'expense' ? 'negative' : ''}>
-                {item.type === 'income' ? '+' : item.type === 'expense' ? '-' : ''}
-                {money(item.amount)}
-              </strong>
-              <div className="row-actions">
-                {onUpdate && (
-                  <button type="button" onClick={() => setEditingId(item.id)} title="Editar lançamento">
-                    <ReceiptText size={17} />
-                  </button>
-                )}
-                {onDelete && (
-                  <button type="button" onClick={() => onDelete(item.id)} title="Excluir lançamento">
-                    <Trash2 size={17} />
-                  </button>
-                )}
-              </div>
-            </>
-          )}
-        </article>
-      ))}
-    </div>
+    <main className="zero-auth">
+      <section className="auth-story">
+        <Brand sync="secure" />
+        <div className="auth-copy">
+          <h1>Entre no Norte.</h1>
+          <p>Uma fintech com IA para separar vida pessoal e negocio sem voce precisar virar planilha.</p>
+        </div>
+        <div className="auth-proof-card">
+          <Brain size={22} />
+          <span>Norte IA</span>
+          <strong>"Recebi 300 de cliente"</strong>
+          <small>vai para negocio, categoria Vendas, aguardando confirmacao</small>
+        </div>
+      </section>
+      <form onSubmit={submit}>
+        <h2>{mode === 'login' ? 'Acessar' : 'Criar conta'}</h2>
+        <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" placeholder="Email" />
+        <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Senha" />
+        {message && <span className="auth-message">{message}</span>}
+        <button type="submit" disabled={busy}>{busy ? 'Aguarde' : mode === 'login' ? 'Entrar' : 'Criar conta'}</button>
+        <button className="demo-entry" type="button" onClick={onDemo}>
+          Experimentar agora <ChevronRight size={17} />
+        </button>
+        <span className="demo-note">Entre em uma carteira pronta e sinta a IA organizando pessoal + negocio.</span>
+        <button type="button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
+          {mode === 'login' ? 'Criar conta' : 'Ja tenho conta'}
+        </button>
+        {mode === 'login' && <button type="button" onClick={recover}>Esqueci minha senha</button>}
+      </form>
+    </main>
   )
 }
 
