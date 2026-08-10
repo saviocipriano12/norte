@@ -128,6 +128,7 @@ type BillFormState = {
 
 type MovementTypeFilter = 'all' | 'income' | 'expense';
 type MovementContextFilter = 'all' | EntryContext;
+type FinancialHealth = 'healthy' | 'stable' | 'attention' | 'critical';
 
 type PersistedState = {
   step: 'welcome' | 'onboarding' | 'app';
@@ -282,6 +283,17 @@ function formatBillDue(value: string) {
   }
 
   return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+}
+
+function isBillOverdue(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const due = new Date(`${value}T12:00:00`);
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return due < startOfToday;
 }
 
 function pickAccountForContext(accounts: Account[], context: EntryContext | undefined) {
@@ -721,6 +733,22 @@ export function NorteApp() {
   }, 0);
 
   const spendableToday = Math.max(personalBalance - personalBillsTotal - pendingPersonalExpense - 150, 0);
+  const overdueBills = billState.filter((bill) => isBillOverdue(bill.due));
+  const financialHealth: FinancialHealth =
+    overdueBills.length > 0 || spendableToday <= 0
+      ? 'critical'
+      : pendingQuestions > 0 || businessProfit < 0
+        ? 'attention'
+        : spendableToday >= 1000 && businessProfit >= 0
+          ? 'healthy'
+          : 'stable';
+  const financialHealthPresentation: Record<FinancialHealth, { label: string; color: string }> = {
+    healthy: { label: 'Saudavel', color: '#21C45A' },
+    stable: { label: 'Estavel', color: '#5B8CFF' },
+    attention: { label: 'Atencao', color: '#FF8A00' },
+    critical: { label: 'Critico', color: '#EF4444' },
+  };
+  const healthPresentation = financialHealthPresentation[financialHealth];
 
   const summaryMetrics = [
     {
@@ -2426,6 +2454,8 @@ export function NorteApp() {
                 personalBalance={currency.format(personalBalance)}
                 businessBalance={currency.format(businessBalance)}
                 spendableToday={currency.format(spendableToday)}
+                healthLabel={healthPresentation.label}
+                healthColor={healthPresentation.color}
                 onOpenWallet={() => setActiveTab('wallet')}
                 onOpenMoves={() => setActiveTab('moves')}
                 onOpenPlan={() => setActiveTab('plan')}
@@ -2544,8 +2574,12 @@ export function NorteApp() {
                   OpenAI: {assistantHealth?.openaiConfigured ? 'conectada' : 'aguardando validacao'} {assistantHealth?.model ? `| Modelo: ${assistantHealth.model}` : ''}
                 </Text>
 
-                <View style={styles.orbStage}>
-                  <NorteOrb size={290} mode={assistantMode} theme={appThemes.dark} />
+                  <View style={styles.orbStage}>
+                    <View style={styles.orbStatus}>
+                      <View style={[styles.orbStatusDot, { backgroundColor: healthPresentation.color }]} />
+                      <Text style={styles.orbStatusText}>Saude financeira: {healthPresentation.label}</Text>
+                    </View>
+                    <NorteOrb size={290} mode={assistantMode} theme={appThemes.dark} />
                   <Text style={styles.orbLabel}>
                     {assistantMode === 'listening' && (liveTranscript ? `Ouvindo: ${liveTranscript}` : 'Ouvindo seu dia')}
                     {assistantMode === 'thinking' && 'Interpretando movimentos'}
@@ -3386,6 +3420,8 @@ function BalanceSpotlightCard({
   personalBalance,
   businessBalance,
   spendableToday,
+  healthLabel,
+  healthColor,
   onOpenWallet,
   onOpenMoves,
   onOpenPlan,
@@ -3395,6 +3431,8 @@ function BalanceSpotlightCard({
   personalBalance: string;
   businessBalance: string;
   spendableToday: string;
+  healthLabel: string;
+  healthColor: string;
   onOpenWallet: () => void;
   onOpenMoves: () => void;
   onOpenPlan: () => void;
@@ -3403,8 +3441,8 @@ function BalanceSpotlightCard({
   return (
     <View style={styles.balanceSpotlight}>
       <View style={styles.balanceChip}>
-        <View style={styles.balanceChipDot} />
-        <Text style={styles.balanceChipText}>Saldo geral</Text>
+        <View style={[styles.balanceChipDot, { backgroundColor: healthColor }]} />
+        <Text style={styles.balanceChipText}>Saude: {healthLabel}</Text>
       </View>
       <Text style={styles.balanceCaption}>Seu saldo</Text>
       <Text style={styles.balanceAmount}>{totalBalance}</Text>
@@ -4717,6 +4755,25 @@ function createStyles(palette: ThemePalette) {
     paddingVertical: spacing.lg,
     borderRadius: radius.lg,
     backgroundColor: '#111111',
+  },
+  orbStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  orbStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  orbStatusText: {
+    color: '#A0A0A0',
+    fontSize: 12,
+    fontWeight: '700',
   },
   orbLabel: {
     color: '#F2F2EF',
