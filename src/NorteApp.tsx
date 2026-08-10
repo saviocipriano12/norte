@@ -2580,20 +2580,22 @@ export function NorteApp() {
                       <Text style={styles.orbStatusText}>Saude financeira: {healthPresentation.label}</Text>
                     </View>
                     <NorteOrb size={290} mode={assistantMode} theme={appThemes.dark} />
-                  <Text style={styles.orbLabel}>
+                    <Text style={styles.orbLabel}>
                     {assistantMode === 'listening' && (liveTranscript ? `Ouvindo: ${liveTranscript}` : 'Ouvindo seu dia')}
                     {assistantMode === 'thinking' && 'Interpretando movimentos'}
                     {assistantMode === 'responding' && 'Respondendo com contexto'}
                     {assistantMode === 'idle' && (isConversationMode ? 'Modo conversa ativo' : 'Pronta para te organizar')}
-                  </Text>
-                </View>
+                    </Text>
+                    <Pressable
+                      style={[styles.orbTalkButton, isConversationMode && styles.orbTalkButtonActive]}
+                      onPress={() => void toggleConversationMode()}
+                    >
+                      <Ionicons name={isConversationMode ? 'stop' : 'mic'} size={18} color="#111111" />
+                      <Text style={styles.orbTalkButtonText}>{isConversationMode ? 'Encerrar conversa' : 'Falar com o Norte'}</Text>
+                    </Pressable>
+                  </View>
 
-                <View style={styles.modeRow}>
-                  <ModeButton
-                    label={isConversationMode ? 'Encerrar conversa' : 'Modo conversa'}
-                    active={isConversationMode}
-                    onPress={() => void toggleConversationMode()}
-                  />
+                  <View style={styles.modeRow}>
                   <ModeButton label={isRecording ? 'Parar audio' : 'Falar agora'} active={isRecording} onPress={() => void handleVoiceCapture()} />
                   <ModeButton label="Enviar" active={assistantMode === 'thinking'} onPress={() => void handleInterpretMessage()} />
                   <ModeButton
@@ -4779,6 +4781,23 @@ function createStyles(palette: ThemePalette) {
     color: '#F2F2EF',
     fontSize: 15,
     fontWeight: '600',
+  },
+  orbTalkButton: {
+    minHeight: 48,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: '#F2F2EF',
+  },
+  orbTalkButtonActive: {
+    backgroundColor: '#FFFFFF',
+  },
+  orbTalkButtonText: {
+    color: '#111111',
+    fontSize: 14,
+    fontWeight: '800',
   },
   modeRow: {
     flexDirection: 'row',
