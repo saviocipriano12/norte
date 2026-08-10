@@ -513,6 +513,7 @@ export async function updateWalletAccount(session: Session, accountId: string, i
       name: input.name,
       kind: input.kind,
       is_business: input.isBusiness,
+      ...(input.balance !== undefined ? { balance: input.balance } : {}),
       updated_at: new Date().toISOString(),
     })
     .eq('user_id', session.user.id)

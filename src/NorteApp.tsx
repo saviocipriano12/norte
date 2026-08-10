@@ -104,6 +104,7 @@ type ManualEntryState = {
 type AccountFormState = {
   name: string;
   detail: string;
+  balance: string;
   kind: string;
   isBusiness: boolean;
 };
@@ -199,6 +200,7 @@ const defaultManualEntry: ManualEntryState = {
 const defaultAccountForm: AccountFormState = {
   name: '',
   detail: '',
+  balance: '0',
   kind: 'cash',
   isBusiness: false,
 };
@@ -1912,8 +1914,10 @@ export function NorteApp() {
   };
 
   const handleSaveAccount = async () => {
-    if (!accountForm.name.trim()) {
-      showNotice('Falta o nome da conta', 'Diga como voce quer identificar esta conta, por exemplo: Conta digital ou Caixa do negocio.');
+    const balance = parseCurrencyInput(accountForm.balance);
+
+    if (!accountForm.name.trim() || !Number.isFinite(balance)) {
+      showNotice('Confira os dados da conta', 'Informe um nome e um saldo valido, por exemplo: Conta digital e R$ 1.250,00.');
       return;
     }
 
@@ -1923,9 +1927,7 @@ export function NorteApp() {
       detail: accountForm.detail.trim() || (accountForm.isBusiness ? 'Conta do negocio' : 'Conta pessoal'),
       kind: accountForm.kind,
       isBusiness: accountForm.isBusiness,
-      balance: editingAccountId
-        ? accountState.find((item) => item.id === editingAccountId)?.balance ?? 0
-        : 0,
+      balance,
     };
 
     setAccountState((current) =>
@@ -1963,6 +1965,7 @@ export function NorteApp() {
     setAccountForm({
       name: account.name,
       detail: account.detail,
+      balance: String(account.balance),
       kind: account.kind,
       isBusiness: account.isBusiness,
     });
@@ -2969,6 +2972,14 @@ export function NorteApp() {
                       value={accountForm.detail}
                       onChangeText={(value) => setAccountForm((current) => ({ ...current, detail: value }))}
                       placeholder="Descricao curta"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <TextInput
+                      value={accountForm.balance}
+                      onChangeText={(value) => setAccountForm((current) => ({ ...current, balance: value }))}
+                      placeholder="Saldo atual"
+                      keyboardType="decimal-pad"
                       placeholderTextColor={palette.textMuted}
                       style={styles.field}
                     />
