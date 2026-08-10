@@ -292,7 +292,7 @@ function createStyles(theme: ThemePalette) {
       fontWeight: '700',
     },
     modePillTextActive: {
-      color: theme.text,
+      color: theme.id === 'dark' ? '#0B0B0B' : '#FFFFFF',
     },
     form: {
       gap: spacing.md,

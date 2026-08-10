@@ -21,3 +21,11 @@ export async function savePersistedState(key: string, value: unknown): Promise<v
     // Keep the MVP resilient even if local storage is temporarily unavailable.
   }
 }
+
+export async function removePersistedState(key: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(key);
+  } catch {
+    // Keep sign-out resilient even if local storage is temporarily unavailable.
+  }
+}

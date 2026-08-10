@@ -18,9 +18,64 @@ const upload = multer({
   },
 });
 const app = express();
+const rateLimitWindowMs = 60_000;
+const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
 
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
+
+function requestKey(req: Request, scope: string) {
+  return `${scope}:${req.ip ?? req.socket.remoteAddress ?? 'unknown'}`;
+}
+
+function allowRequest(req: Request, scope: string, limit: number) {
+  const key = requestKey(req, scope);
+  const now = Date.now();
+  const current = rateLimitBuckets.get(key);
+
+  if (!current || current.resetAt <= now) {
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + rateLimitWindowMs });
+    return true;
+  }
+
+  if (current.count >= limit) {
+    return false;
+  }
+
+  current.count += 1;
+  return true;
+}
+
+async function requireAuthenticatedRequest(req: Request, res: Response) {
+  if (!isSupabaseAdminConfigured()) {
+    return true;
+  }
+
+  const authorization = req.header('authorization') ?? '';
+  const accessToken = authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : '';
+
+  if (!accessToken) {
+    res.status(401).send('Sessao do Supabase nao enviada.');
+    return false;
+  }
+
+  try {
+    await getSupabaseUserFromAccessToken(accessToken);
+    return true;
+  } catch {
+    res.status(401).send('Sessao do Supabase invalida ou expirada.');
+    return false;
+  }
+}
+
+function requireRateLimit(req: Request, res: Response, scope: string, limit: number) {
+  if (allowRequest(req, scope, limit)) {
+    return true;
+  }
+
+  res.status(429).send('Muitas tentativas. Aguarde um minuto e tente novamente.');
+  return false;
+}
 
 const assistantTurnRequestSchema = z.object({
   message: z.string().min(1),
@@ -180,6 +235,10 @@ app.get('/api/health', (_req: Request, res: Response) => {
 
 app.post('/api/assistant/respond', async (req: Request, res: Response) => {
   try {
+    if (!(await requireAuthenticatedRequest(req, res)) || !requireRateLimit(req, res, 'assistant', 30)) {
+      return;
+    }
+
     const payload = assistantTurnRequestSchema.parse(req.body) as AssistantTurnRequest;
     const result = await generateNorteAssistantTurn(getOpenAIClient(), payload);
     res.json(result);
@@ -195,6 +254,10 @@ app.post('/api/assistant/sync-turn', async (req: Request, res: Response) => {
 
     if (!isSupabaseAdminConfigured()) {
       res.status(503).send('Supabase service role ainda nao configurado no backend do Norte.');
+      return;
+    }
+
+    if (!requireRateLimit(req, res, 'sync', 30)) {
       return;
     }
 
@@ -222,6 +285,10 @@ app.post('/api/assistant/sync-turn', async (req: Request, res: Response) => {
 
 app.post('/api/voice/transcribe', upload.single('audio'), async (req: Request, res: Response) => {
   try {
+    if (!(await requireAuthenticatedRequest(req, res)) || !requireRateLimit(req, res, 'transcribe', 12)) {
+      return;
+    }
+
     if (!req.file?.buffer) {
       res.status(400).send('Arquivo de audio nao enviado.');
       return;
@@ -251,6 +318,10 @@ app.post('/api/voice/transcribe', upload.single('audio'), async (req: Request, r
 
 app.post('/api/realtime/session', express.text({ type: ['application/sdp', 'text/plain'], limit: '2mb' }), async (req: Request, res: Response) => {
   try {
+    if (!(await requireAuthenticatedRequest(req, res)) || !requireRateLimit(req, res, 'realtime', 8)) {
+      return;
+    }
+
     ensureApiKey();
 
     const offerSdp = typeof req.body === 'string' ? req.body.trim() : '';
@@ -289,6 +360,10 @@ app.post('/api/realtime/session', express.text({ type: ['application/sdp', 'text
 
 app.post('/api/voice/speak', async (req: Request, res: Response) => {
   try {
+    if (!(await requireAuthenticatedRequest(req, res)) || !requireRateLimit(req, res, 'speak', 20)) {
+      return;
+    }
+
     const body = z.object({ text: z.string().min(1) }).parse(req.body);
 
     const speech = await getOpenAIClient().audio.speech.create({

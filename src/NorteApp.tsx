@@ -18,7 +18,14 @@ import { Ionicons } from '@expo/vector-icons';
 
 import type { AssistantTurnResponse } from './assistantTypes';
 import { AuthScreen } from './AuthScreen';
-import { applyMovementToAccounts, buildMovementFromDraft, formatMovementDate, movementBusinessWeight, parseCurrencyInput } from './financeEngine';
+import {
+  applyMovementToAccounts,
+  buildMovementFromDraft,
+  formatMovementDate,
+  movementBusinessWeight,
+  parseCurrencyInput,
+  parseFinanceMessage,
+} from './financeEngine';
 import { NorteOrb } from './NorteOrb';
 import { createRealtimeTransport, isRealtimeVoiceSupported, type RealtimeTransport } from './realtimeTransport';
 import {
@@ -53,7 +60,7 @@ import {
   type UpcomingBill,
   type WalletCard,
 } from './mockData';
-import { loadPersistedState, savePersistedState } from './storage';
+import { loadPersistedState, removePersistedState, savePersistedState } from './storage';
 import {
   createMovement,
   createGoal,
@@ -69,7 +76,6 @@ import {
   ensureUserProfile,
   loadWorkspaceSnapshot,
   persistConfirmedDrafts,
-  persistManualMovement,
   updateMovement,
   updateRemoteDraftContext,
   updateGoal,
@@ -438,7 +444,7 @@ export function NorteApp() {
     let active = true;
 
     async function hydrate() {
-      const saved = await loadPersistedState<PersistedState>(STORAGE_KEY);
+      const saved = isSupabaseConfigured() ? null : await loadPersistedState<PersistedState>(STORAGE_KEY);
 
       if (!active) {
         return;
@@ -643,7 +649,7 @@ export function NorteApp() {
   }, []);
 
   useEffect(() => {
-    if (isHydrating) {
+    if (isHydrating || isSupabaseConfigured()) {
       return;
     }
 
@@ -931,17 +937,35 @@ export function NorteApp() {
       return;
     }
 
+    const email = input.email.trim();
+    const fullName = input.fullName?.trim() ?? '';
+
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setAuthError('Informe um e-mail valido para continuar.');
+      return;
+    }
+
+    if (input.password.length < 6) {
+      setAuthError('A senha precisa ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    if (input.mode === 'signup' && fullName.length < 2) {
+      setAuthError('Informe seu nome para personalizar o Norte.');
+      return;
+    }
+
     setIsAuthLoading(true);
     setAuthError(null);
 
     try {
       if (input.mode === 'signup') {
         const { data, error } = await supabase.auth.signUp({
-          email: input.email.trim(),
+          email,
           password: input.password,
           options: {
             data: {
-              full_name: input.fullName?.trim() || '',
+              full_name: fullName,
             },
           },
         });
@@ -955,7 +979,7 @@ export function NorteApp() {
         }
       } else {
         const { error } = await supabase.auth.signInWithPassword({
-          email: input.email.trim(),
+          email,
           password: input.password,
         });
 
@@ -976,6 +1000,7 @@ export function NorteApp() {
     }
 
     await supabase.auth.signOut();
+    await removePersistedState(STORAGE_KEY);
     setMessages(initialMessages);
     setDrafts(initialDrafts);
     setMovements([]);
@@ -985,6 +1010,7 @@ export function NorteApp() {
     setBillState(upcomingBills);
     setActiveTab('assistant');
     setFocusPanel('business');
+    setStep('welcome');
     setIsDrawerOpen(false);
     setIsProfileOpen(false);
   };
@@ -1065,6 +1091,12 @@ export function NorteApp() {
   };
 
   const stopRealtimeConversation = () => {
+    const transport = realtimeTransportRef.current;
+    if (transport) {
+      transport.stop();
+      realtimeTransportRef.current = null;
+    }
+
     const channel = realtimeChannelRef.current;
     if (channel) {
       channel.close?.();
@@ -1073,8 +1105,10 @@ export function NorteApp() {
 
     const peer = realtimePeerRef.current;
     if (peer) {
-      peer.getSenders?.().forEach((sender: any) => sender.track?.stop?.());
-      peer.close?.();
+      if (!transport) {
+        peer.getSenders?.().forEach((sender: any) => sender.track?.stop?.());
+        peer.close?.();
+      }
       realtimePeerRef.current = null;
     }
 
@@ -1103,7 +1137,7 @@ export function NorteApp() {
       stopAssistantPlayback();
       setIsSpeaking(true);
 
-      const audioBlob = await speakNorteText(text);
+      const audioBlob = await speakNorteText(text, session?.access_token);
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
 
@@ -1262,7 +1296,11 @@ export function NorteApp() {
         try {
           setAssistantMode('thinking');
           setLiveTranscript('Transcrevendo com a OpenAI...');
-          const transcription = await transcribeNorteAudio(audioBlob, `norte-audio.${preferredMimeType.includes('webm') ? 'webm' : 'wav'}`);
+          const transcription = await transcribeNorteAudio(
+            audioBlob,
+            `norte-audio.${preferredMimeType.includes('webm') ? 'webm' : 'wav'}`,
+            session?.access_token,
+          );
           const transcript = transcription.text.trim();
 
           if (!transcript) {
@@ -1369,13 +1407,47 @@ export function NorteApp() {
       return response;
     }
 
+    const runLocalAssistantFallback = () => {
+      const parsed = parseFinanceMessage(trimmed);
+
+      if (parsed.drafts.length === 0) {
+        return null;
+      }
+
+      const reply = `${parsed.reply} A IA esta temporariamente offline, entao deixei tudo como rascunho local para voce revisar.`;
+      const response: AssistantTurnResponse = {
+        assistantMessage: reply,
+        speechText: reply,
+        drafts: parsed.drafts,
+      };
+      const localDrafts = parsed.drafts.map((draft) => ({
+        ...draft,
+        walletAccountId: pickAccountForContext(accountState, draft.context)?.id ?? null,
+      }));
+
+      setAssistantError(null);
+
+      if (options?.clearInput) {
+        setAssistantInput('');
+      }
+
+      setMessages((current) => [...current, createMessage('user', trimmed), createMessage('assistant', reply)]);
+      setDrafts((current) => [...localDrafts, ...current]);
+      setLastSpeechText(reply);
+      setAssistantMode('idle');
+      return response;
+    };
+
     setAssistantError(null);
     const latestHealth = await refreshAssistantHealth();
 
     if (latestHealth && !latestHealth.openaiConfigured) {
-      setAssistantMode('idle');
-      setAssistantError('A OpenAI ainda nao esta conectada no backend do Norte.');
-      return null;
+      const localFallback = runLocalAssistantFallback();
+      if (!localFallback) {
+        setAssistantMode('idle');
+        setAssistantError('A IA esta offline e nao consegui identificar um movimento financeiro nessa frase.');
+      }
+      return localFallback;
     }
 
     setAssistantMode('thinking');
@@ -1393,7 +1465,7 @@ export function NorteApp() {
         drafts,
         profile,
         selectedPain,
-      });
+      }, session?.access_token);
 
       let persistedMessages = [createMessage('user', trimmed), createMessage('assistant', result.assistantMessage)];
       let persistedDrafts = result.drafts.map((draft) => ({
@@ -1435,6 +1507,12 @@ export function NorteApp() {
         error instanceof Error
           ? error.message
           : 'Nao foi possivel falar com a IA real do Norte agora.';
+
+      const localFallback = runLocalAssistantFallback();
+
+      if (localFallback) {
+        return localFallback;
+      }
 
       if (options?.appendFailureMessage ?? true) {
         setMessages((current) => [
@@ -1611,14 +1689,7 @@ export function NorteApp() {
   };
 
   const startRealtimeConversation = async () => {
-    if (typeof window === 'undefined' || typeof navigator === 'undefined') {
-      setAssistantError('O modo conversa ao vivo funciona no navegador.');
-      return;
-    }
-
-    const PeerConnection = (window as any).RTCPeerConnection;
-
-    if (!PeerConnection || !navigator.mediaDevices?.getUserMedia) {
+    if (!isRealtimeVoiceSupported()) {
       setAssistantError('Seu navegador nao suporta conversa de voz em tempo real com a Norte.');
       return;
     }
@@ -1632,30 +1703,12 @@ export function NorteApp() {
       setAssistantMode('listening');
       setLiveTranscript('Conectando a Norte em tempo real...');
 
-      const peer = new PeerConnection();
+      const transport = await createRealtimeTransport();
+      realtimeTransportRef.current = transport;
+
+      const peer = transport.peerConnection;
       realtimePeerRef.current = peer;
-
-      const remoteAudio = new Audio();
-      remoteAudio.autoplay = true;
-      realtimeAudioRef.current = remoteAudio;
-
-      peer.ontrack = (event: any) => {
-        remoteAudio.srcObject = event.streams[0];
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-        },
-      });
-
-      realtimeStreamRef.current = stream;
-      stream.getTracks().forEach((track: any) => peer.addTrack(track, stream));
-
-      const channel = peer.createDataChannel('oai-events');
+      const channel = transport.dataChannel;
       realtimeChannelRef.current = channel;
       channel.onmessage = (event: any) => {
         void handleRealtimeServerEvent(String(event.data ?? ''));
@@ -1677,7 +1730,7 @@ export function NorteApp() {
 
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
-      const answerSdp = await createNorteRealtimeSession(offer.sdp ?? '');
+      const answerSdp = await createNorteRealtimeSession(offer.sdp ?? '', session?.access_token);
       await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
     } catch (error) {
       stopRealtimeConversation();
@@ -2526,16 +2579,23 @@ export function NorteApp() {
                   </Pressable>
                 </View>
                 <View style={styles.detailStack}>
-                  {decoratedGoals.map((goal) => (
-                    <GoalListItem
-                      key={goal.id}
-                      title={goal.title}
-                      current={goal.current}
-                      target={goal.target}
-                      progress={goal.progress}
-                      accent={goal.accent}
-                    />
-                  ))}
+                  {decoratedGoals.length > 0 ? (
+                    decoratedGoals.map((goal) => (
+                      <GoalListItem
+                        key={goal.id}
+                        title={goal.title}
+                        current={goal.current}
+                        target={goal.target}
+                        progress={goal.progress}
+                        accent={goal.accent}
+                      />
+                    ))
+                  ) : (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="flag-outline" size={22} color={palette.textMuted} />
+                      <Text style={styles.bodyText}>Crie uma meta para dar um destino claro ao seu dinheiro.</Text>
+                    </View>
+                  )}
                 </View>
               </Card>
 
@@ -2598,7 +2658,13 @@ export function NorteApp() {
                         </Pressable>
                       </View>
                     </View>
-                    <InsightRow text="Todos os seus dados deste MVP ficam persistidos localmente no aparelho." />
+                    <InsightRow
+                      text={
+                        session
+                          ? 'Seus dados ficam sincronizados na sua conta do Supabase e separados de outros usuarios.'
+                          : 'Todos os seus dados ficam persistidos localmente neste aparelho.'
+                      }
+                    />
                     <InsightRow text="Nada e salvo automaticamente sem sua confirmacao na area da IA." />
                     <Pressable style={styles.secondaryButton} onPress={handleResetLocalData}>
                       <Text style={styles.secondaryButtonText}>Resetar dados locais</Text>
@@ -3177,25 +3243,32 @@ export function NorteApp() {
                   </View>
                 ) : null}
                 <View style={styles.detailStack}>
-                  {decoratedGoals.map((goal) => (
-                    <View key={goal.id} style={styles.goalEditableItem}>
-                      <GoalListItem
-                        title={goal.title}
-                        current={goal.current}
-                        target={goal.target}
-                        progress={goal.progress}
-                        accent={goal.accent}
-                      />
-                      <View style={styles.inlineActions}>
-                        <Pressable onPress={() => handleEditGoal(goal)}>
-                          <Text style={styles.inlineLink}>Editar</Text>
-                        </Pressable>
-                        <Pressable onPress={() => handleDeleteGoal(goal.id)}>
-                          <Text style={styles.inlineDanger}>Excluir meta</Text>
-                        </Pressable>
+                  {decoratedGoals.length > 0 ? (
+                    decoratedGoals.map((goal) => (
+                      <View key={goal.id} style={styles.goalEditableItem}>
+                        <GoalListItem
+                          title={goal.title}
+                          current={goal.current}
+                          target={goal.target}
+                          progress={goal.progress}
+                          accent={goal.accent}
+                        />
+                        <View style={styles.inlineActions}>
+                          <Pressable onPress={() => handleEditGoal(goal)}>
+                            <Text style={styles.inlineLink}>Editar</Text>
+                          </Pressable>
+                          <Pressable onPress={() => handleDeleteGoal(goal.id)}>
+                            <Text style={styles.inlineDanger}>Excluir meta</Text>
+                          </Pressable>
+                        </View>
                       </View>
+                    ))
+                  ) : (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="flag-outline" size={22} color={palette.textMuted} />
+                      <Text style={styles.bodyText}>Nenhuma meta criada ainda.</Text>
                     </View>
-                  ))}
+                  )}
                 </View>
               </Card>
 
@@ -3249,22 +3322,29 @@ export function NorteApp() {
                   </View>
                 ) : null}
                 <View style={styles.detailStack}>
-                  {billState.map((bill) => (
-                    <View key={bill.id} style={styles.goalSubCard}>
-                      <View style={styles.flexOne}>
-                        <Text style={styles.cardTitle}>{bill.title}</Text>
-                        <Text style={styles.mutedText}>
-                          Vence {formatBillDue(bill.due)} / {bill.context}
-                        </Text>
+                  {billState.length > 0 ? (
+                    billState.map((bill) => (
+                      <View key={bill.id} style={styles.goalSubCard}>
+                        <View style={styles.flexOne}>
+                          <Text style={styles.cardTitle}>{bill.title}</Text>
+                          <Text style={styles.mutedText}>
+                            Vence {formatBillDue(bill.due)} / {bill.context}
+                          </Text>
+                        </View>
+                        <View style={styles.billItemSide}>
+                          <Text style={styles.amountNegative}>{currency.format(bill.amount)}</Text>
+                          <Pressable onPress={() => handleDeleteBill(bill.id)}>
+                            <Text style={styles.inlineDanger}>Excluir</Text>
+                          </Pressable>
+                        </View>
                       </View>
-                      <View style={styles.billItemSide}>
-                        <Text style={styles.amountNegative}>{currency.format(bill.amount)}</Text>
-                        <Pressable onPress={() => handleDeleteBill(bill.id)}>
-                          <Text style={styles.inlineDanger}>Excluir</Text>
-                        </Pressable>
-                      </View>
+                    ))
+                  ) : (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="calendar-outline" size={22} color={palette.textMuted} />
+                      <Text style={styles.bodyText}>Cadastre uma conta futura para o Norte proteger seu caixa.</Text>
                     </View>
-                  ))}
+                  )}
                 </View>
               </Card>
             </View>

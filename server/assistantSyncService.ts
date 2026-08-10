@@ -39,8 +39,8 @@ function draftRowToApp(row: {
 
 function buildDefaultAccountSeed(userId: string) {
   return [
-    { user_id: userId, name: 'Conta pessoal', kind: 'cash', currency: 'BRL', balance: 8600, is_business: false },
-    { user_id: userId, name: 'Conta PJ', kind: 'cash', currency: 'BRL', balance: 9390, is_business: true },
+    { user_id: userId, name: 'Conta pessoal', kind: 'cash', currency: 'BRL', balance: 0, is_business: false },
+    { user_id: userId, name: 'Conta PJ', kind: 'cash', currency: 'BRL', balance: 0, is_business: true },
     { user_id: userId, name: 'Reserva', kind: 'reserve', currency: 'BRL', balance: 0, is_business: false },
   ];
 }

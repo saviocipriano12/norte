@@ -3,10 +3,7 @@ import type { Session } from '@supabase/supabase-js';
 import type { AssistantTurnResponse } from './assistantTypes';
 import {
   initialAccounts,
-  initialCards,
   initialMessages,
-  goals as initialGoals,
-  upcomingBills as initialUpcomingBills,
   type Account,
   type DraftEntry,
   type Message,
@@ -79,7 +76,7 @@ function buildDefaultAccountSeed(userId: string) {
     name: account.name,
     kind: account.name === 'Reserva' ? 'reserve' : 'cash',
     currency: 'BRL',
-    balance: account.balance,
+    balance: 0,
     is_business: account.name.includes('PJ'),
   }));
 }
@@ -237,8 +234,8 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
   const accountMap = new Map(accountRows.map((account) => [account.id as string, account.name as string]));
 
   return {
-    accounts: accountRows.length > 0 ? accountRows.map((account) => accountRowToApp(account as never)) : initialAccounts,
-    cards: (cards ?? []).length > 0 ? (cards ?? []).map((card) => cardRowToApp(card as never)) : initialCards,
+    accounts: accountRows.map((account) => accountRowToApp(account as never)),
+    cards: (cards ?? []).map((card) => cardRowToApp(card as never)),
     goals:
       (goals ?? []).length > 0
         ? (goals ?? []).map((goal) => ({
@@ -247,7 +244,7 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
             target: Number(goal.target_amount),
             current: Number(goal.current_amount),
           }))
-        : initialGoals,
+        : [],
     upcomingBills:
       (upcomingBills ?? []).length > 0
         ? (upcomingBills ?? []).map((bill) => ({
@@ -257,7 +254,7 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
             due: bill.due_date as string,
             context: (bill.context as UpcomingBill['context'] | null) ?? 'Pessoal',
           }))
-        : initialUpcomingBills,
+        : [],
     movements: (movements ?? []).map((movement) => movementRowToApp(movement as never, accountMap)),
     drafts: (drafts ?? []).map((draft) => ({
       id: draft.id as string,

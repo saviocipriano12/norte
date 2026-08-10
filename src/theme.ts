@@ -76,8 +76,8 @@ export const appThemes: Record<ThemeMode, ThemePalette> = {
     personal: '#FFD84D',
     overlay: 'rgba(24,30,38,0.14)',
     shadow: '#9B9B96',
-    heroGradient: ['rgba(255,255,255,0.98)', 'rgba(240,236,228,0.88)'],
-    drawerGradient: ['rgba(255,255,255,0.98)', 'rgba(242,239,232,0.92)'],
+    heroGradient: ['rgba(255,255,255,0.98)', 'rgba(232,232,229,0.9)'],
+    drawerGradient: ['rgba(255,255,255,0.98)', 'rgba(242,242,239,0.94)'],
     avatarGradient: ['#10151C', '#5F6D7D'],
   },
 };

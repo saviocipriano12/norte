@@ -25,11 +25,12 @@ export async function getNorteAssistantHealth(): Promise<NorteAssistantHealth> {
   return (await response.json()) as NorteAssistantHealth;
 }
 
-export async function askNorteAssistant(payload: AssistantTurnRequest): Promise<AssistantTurnResponse> {
+export async function askNorteAssistant(payload: AssistantTurnRequest, accessToken?: string): Promise<AssistantTurnResponse> {
   const response = await fetch(`${apiBaseUrl}/api/assistant/respond`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     body: JSON.stringify(payload),
   });
@@ -42,12 +43,13 @@ export async function askNorteAssistant(payload: AssistantTurnRequest): Promise<
   return (await response.json()) as AssistantTurnResponse;
 }
 
-export async function transcribeNorteAudio(audioFile: Blob, filename = 'norte-audio.webm'): Promise<{ text: string }> {
+export async function transcribeNorteAudio(audioFile: Blob, filename = 'norte-audio.webm', accessToken?: string): Promise<{ text: string }> {
   const formData = new FormData();
   formData.append('audio', audioFile, filename);
 
   const response = await fetch(`${apiBaseUrl}/api/voice/transcribe`, {
     method: 'POST',
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     body: formData,
   });
 
@@ -59,11 +61,12 @@ export async function transcribeNorteAudio(audioFile: Blob, filename = 'norte-au
   return (await response.json()) as { text: string };
 }
 
-export async function speakNorteText(text: string): Promise<Blob> {
+export async function speakNorteText(text: string, accessToken?: string): Promise<Blob> {
   const response = await fetch(`${apiBaseUrl}/api/voice/speak`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     body: JSON.stringify({ text }),
   });
@@ -76,11 +79,12 @@ export async function speakNorteText(text: string): Promise<Blob> {
   return await response.blob();
 }
 
-export async function createNorteRealtimeSession(offerSdp: string): Promise<string> {
+export async function createNorteRealtimeSession(offerSdp: string, accessToken?: string): Promise<string> {
   const response = await fetch(`${apiBaseUrl}/api/realtime/session`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/sdp',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     body: offerSdp,
   });
