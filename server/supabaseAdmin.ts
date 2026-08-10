@@ -28,3 +28,14 @@ export function getSupabaseAdmin() {
     },
   });
 }
+
+export async function getSupabaseUserFromAccessToken(accessToken: string) {
+  const admin = getSupabaseAdmin();
+  const { data, error } = await admin.auth.getUser(accessToken);
+
+  if (error || !data.user) {
+    throw new Error('Sessao do Supabase invalida ou expirada.');
+  }
+
+  return data.user;
+}

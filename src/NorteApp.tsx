@@ -72,6 +72,7 @@ import {
   persistManualMovement,
   updateMovement,
   updateRemoteDraftContext,
+  updateGoal,
   updateWalletAccount,
   updateWalletCard,
 } from './supabaseData';
@@ -83,7 +84,8 @@ const STORAGE_KEY = '@norte/mvp-state-v1';
 const currency = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
   currency: 'BRL',
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
 });
 
 type OnboardingProfile = (typeof onboardingProfiles)[number]['id'];
@@ -262,8 +264,18 @@ function showNotice(title: string, message: string) {
   Alert.alert(title, message);
 }
 
+function isValidIsoDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+}
+
 function formatBillDue(value: string) {
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00`) : null;
+  const date = isValidIsoDate(value) ? new Date(`${value}T12:00:00`) : null;
 
   if (!date || Number.isNaN(date.getTime())) {
     return value;
@@ -286,7 +298,7 @@ function formatBillDue(value: string) {
 }
 
 function isBillOverdue(value: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+  if (!isValidIsoDate(value)) {
     return false;
   }
 
@@ -305,7 +317,7 @@ function pickAccountForContext(accounts: Account[], context: EntryContext | unde
     return accounts.find((account) => account.isBusiness) ?? accounts[0];
   }
 
-  return accounts.find((account) => !account.isBusiness) ?? accounts[0];
+  return accounts.find((account) => !account.isBusiness && account.kind !== 'reserve') ?? accounts.find((account) => !account.isBusiness) ?? accounts[0];
 }
 
 function inferContextReply(message: string): EntryContext | null {
@@ -380,6 +392,7 @@ export function NorteApp() {
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalForm, setGoalForm] = useState<GoalFormState>(defaultGoalForm);
+  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
   const [showBillForm, setShowBillForm] = useState(false);
   const [billForm, setBillForm] = useState<BillFormState>(defaultBillForm);
   const [movementTypeFilter, setMovementTypeFilter] = useState<MovementTypeFilter>('all');
@@ -708,10 +721,16 @@ export function NorteApp() {
   const manualEntryAccount = accountState.find((account) => account.id === manualEntry.accountId) ?? accountState[0] ?? null;
   const manualEntryCard = cardState.find((card) => card.id === manualEntry.cardId) ?? null;
 
-  const personalBalance = accountState.find((account) => account.name === 'Conta pessoal')?.balance ?? 0;
-  const businessBalance = accountState.find((account) => account.name === 'Conta PJ')?.balance ?? 0;
-  const reserveBalance = accountState.find((account) => account.name === 'Reserva')?.balance ?? 0;
-  const totalBalance = personalBalance + businessBalance + reserveBalance;
+  const personalBalance = accountState
+    .filter((account) => !account.isBusiness && account.kind !== 'reserve')
+    .reduce((total, account) => total + account.balance, 0);
+  const businessBalance = accountState
+    .filter((account) => account.isBusiness)
+    .reduce((total, account) => total + account.balance, 0);
+  const reserveBalance = accountState
+    .filter((account) => account.kind === 'reserve')
+    .reduce((total, account) => total + account.balance, 0);
+  const totalBalance = accountState.reduce((total, account) => total + account.balance, 0);
   const upcomingBillsTotal = sumAmounts(billState);
   const personalBillsTotal = billState.reduce((total, bill) => total + bill.amount * personalContextWeight(bill.context), 0);
   const businessBillsTotal = billState.reduce((total, bill) => total + bill.amount * movementBusinessWeight(bill.context), 0);
@@ -1286,6 +1305,7 @@ export function NorteApp() {
 
     try {
       return await syncNorteAssistantTurn({
+        accessToken: session.access_token,
         userId: session.user.id,
         fullName: (session.user.user_metadata?.full_name as string | undefined) ?? session.user.email ?? '',
         onboardingProfile: profile,
@@ -2075,19 +2095,27 @@ export function NorteApp() {
     }
 
     const localGoal: Goal = {
-      id: `goal-${Date.now()}`,
+      id: editingGoalId ?? `goal-${Date.now()}`,
       title: goalForm.title.trim(),
       current: Math.min(current, target),
       target,
     };
 
-    setGoalState((items) => [...items, localGoal]);
+    setGoalState((items) =>
+      editingGoalId ? items.map((goal) => (goal.id === editingGoalId ? localGoal : goal)) : [...items, localGoal],
+    );
     setGoalForm(defaultGoalForm);
     setShowGoalForm(false);
+    const savedGoalId = editingGoalId;
+    setEditingGoalId(null);
 
     if (session && supabase) {
       try {
-        await createGoal(session, localGoal);
+        if (savedGoalId) {
+          await updateGoal(session, savedGoalId, localGoal);
+        } else {
+          await createGoal(session, localGoal);
+        }
         await refreshWorkspaceFromCloud();
       } catch (error) {
         setMessages((items) => [
@@ -2098,9 +2126,25 @@ export function NorteApp() {
     }
   };
 
+  const handleEditGoal = (goal: Goal) => {
+    setEditingGoalId(goal.id);
+    setGoalForm({
+      title: goal.title,
+      target: String(goal.target),
+      current: String(goal.current),
+    });
+    setShowGoalForm(true);
+    setActiveTab('plan');
+  };
+
   const handleDeleteGoal = (goalId: string) => {
     confirmDestructiveAction('Excluir meta?', 'O progresso desta meta sera removido do seu planejamento.', async () => {
       setGoalState((items) => items.filter((goal) => goal.id !== goalId));
+      if (editingGoalId === goalId) {
+        setEditingGoalId(null);
+        setGoalForm(defaultGoalForm);
+        setShowGoalForm(false);
+      }
 
       if (session && supabase) {
         try {
@@ -2123,7 +2167,7 @@ export function NorteApp() {
       !billForm.title.trim() ||
       !Number.isFinite(amount) ||
       amount <= 0 ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(billForm.due.trim())
+      !isValidIsoDate(billForm.due.trim())
     ) {
       showNotice('Confira os dados da conta', 'Informe uma descricao, um valor maior que zero e a data no formato AAAA-MM-DD.');
       return;
@@ -2200,6 +2244,7 @@ export function NorteApp() {
     setEditingCardId(null);
     setShowGoalForm(false);
     setGoalForm(defaultGoalForm);
+    setEditingGoalId(null);
     setShowBillForm(false);
     setBillForm(defaultBillForm);
     setMovementTypeFilter('all');
@@ -3078,7 +3123,15 @@ export function NorteApp() {
               <Card variant="soft">
                 <View style={styles.rowBetween}>
                   <Text style={styles.cardTitle}>Todas as metas</Text>
-                  <Pressable onPress={() => setShowGoalForm((value) => !value)}>
+                  <Pressable
+                    onPress={() => {
+                      if (showGoalForm) {
+                        setEditingGoalId(null);
+                        setGoalForm(defaultGoalForm);
+                      }
+                      setShowGoalForm((value) => !value);
+                    }}
+                  >
                     <Text style={styles.inlineLink}>{showGoalForm ? 'Fechar' : 'Nova meta'}</Text>
                   </Pressable>
                 </View>
@@ -3108,7 +3161,7 @@ export function NorteApp() {
                       style={styles.field}
                     />
                     <Pressable style={styles.primaryButtonCompact} onPress={handleSaveGoal}>
-                      <Text style={styles.primaryButtonText}>Salvar meta</Text>
+                      <Text style={styles.primaryButtonText}>{editingGoalId ? 'Atualizar meta' : 'Salvar meta'}</Text>
                     </Pressable>
                   </View>
                 ) : null}
@@ -3122,9 +3175,14 @@ export function NorteApp() {
                         progress={goal.progress}
                         accent={goal.accent}
                       />
-                      <Pressable onPress={() => handleDeleteGoal(goal.id)}>
-                        <Text style={styles.inlineDanger}>Excluir meta</Text>
-                      </Pressable>
+                      <View style={styles.inlineActions}>
+                        <Pressable onPress={() => handleEditGoal(goal)}>
+                          <Text style={styles.inlineLink}>Editar</Text>
+                        </Pressable>
+                        <Pressable onPress={() => handleDeleteGoal(goal.id)}>
+                          <Text style={styles.inlineDanger}>Excluir meta</Text>
+                        </Pressable>
+                      </View>
                     </View>
                   ))}
                 </View>

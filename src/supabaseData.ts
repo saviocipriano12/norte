@@ -625,6 +625,33 @@ export async function deleteGoal(session: Session, goalId: string) {
   }
 }
 
+export async function updateGoal(session: Session, goalId: string, input: GoalInput) {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from('goals')
+    .update({
+      title: input.title,
+      target_amount: input.target,
+      current_amount: input.current,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('user_id', session.user.id)
+    .eq('id', goalId)
+    .select('*')
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Nao foi possivel atualizar a meta.');
+  }
+
+  return {
+    id: data.id as string,
+    title: data.title as string,
+    target: Number(data.target_amount),
+    current: Number(data.current_amount),
+  } satisfies Goal;
+}
+
 export async function createScheduledBill(session: Session, input: UpcomingBillInput) {
   const client = requireSupabase();
   const { data, error } = await client

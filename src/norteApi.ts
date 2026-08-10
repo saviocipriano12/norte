@@ -95,6 +95,7 @@ export async function createNorteRealtimeSession(offerSdp: string): Promise<stri
 }
 
 export async function syncNorteAssistantTurn(payload: {
+  accessToken: string;
   userId: string;
   fullName?: string | null;
   onboardingProfile: 'personal' | 'freelancer' | 'business';
@@ -106,6 +107,7 @@ export async function syncNorteAssistantTurn(payload: {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      Authorization: `Bearer ${payload.accessToken}`,
     },
     body: JSON.stringify(payload),
   });

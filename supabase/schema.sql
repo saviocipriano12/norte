@@ -123,7 +123,8 @@ create table if not exists public.goals (
   target_amount numeric(14,2) not null,
   current_amount numeric(14,2) not null default 0,
   status public.goal_status not null default 'active',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create or replace function public.handle_new_user()

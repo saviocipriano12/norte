@@ -103,6 +103,10 @@ Se voce ja rodou o schema antes da camada de auth entrar, rode tambem:
 
 `supabase/patches/001_auth_profile_bootstrap.sql`
 
+Para habilitar a edicao sincronizada de metas em bancos existentes, rode tambem:
+
+`supabase/patches/002_goal_updates.sql`
+
 Esse patch cria o perfil automaticamente quando um novo usuario nasce no Auth e libera o insert do proprio perfil.
 
 ## Estrutura principal

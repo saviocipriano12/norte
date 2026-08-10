@@ -8,7 +8,7 @@ import { z } from 'zod';
 import type { AssistantTurnRequest } from '../src/assistantTypes';
 import { generateNorteAssistantTurn } from './assistantService';
 import { syncAssistantTurnAdmin } from './assistantSyncService';
-import { isSupabaseAdminConfigured } from './supabaseAdmin';
+import { getSupabaseUserFromAccessToken, isSupabaseAdminConfigured } from './supabaseAdmin';
 
 const port = Number(process.env.PORT || 8787);
 const upload = multer({
@@ -195,6 +195,20 @@ app.post('/api/assistant/sync-turn', async (req: Request, res: Response) => {
 
     if (!isSupabaseAdminConfigured()) {
       res.status(503).send('Supabase service role ainda nao configurado no backend do Norte.');
+      return;
+    }
+
+    const authorization = req.header('authorization') ?? '';
+    const accessToken = authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : '';
+
+    if (!accessToken) {
+      res.status(401).send('Sessao do Supabase nao enviada.');
+      return;
+    }
+
+    const authenticatedUser = await getSupabaseUserFromAccessToken(accessToken);
+    if (authenticatedUser.id !== body.userId) {
+      res.status(403).send('A sessao nao pode sincronizar dados de outro usuario.');
       return;
     }
 
