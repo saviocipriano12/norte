@@ -161,7 +161,7 @@ const dockTabItems: Array<{
 
 const leftDockTabs = dockTabItems.slice(0, 2);
 const rightDockTabs = dockTabItems.slice(2);
-const goalAccentPalette = ['#1F2227', '#F5A524', '#43C463', '#5D7EF8', '#C7CDD6'];
+const goalAccentPalette = ['#111111', '#21C45A', '#FF8A00', '#5B8CFF', '#FFD84D'];
 const assistantPromptSuggestions = [
   'Organize meu dia financeiro',
   'Quanto posso gastar hoje?',
@@ -2533,7 +2533,7 @@ export function NorteApp() {
                 </Text>
 
                 <View style={styles.orbStage}>
-                  <NorteOrb size={290} mode={assistantMode} theme={currentTheme} />
+                  <NorteOrb size={290} mode={assistantMode} theme={appThemes.dark} />
                   <Text style={styles.orbLabel}>
                     {assistantMode === 'listening' && (liveTranscript ? `Ouvindo: ${liveTranscript}` : 'Ouvindo seu dia')}
                     {assistantMode === 'thinking' && 'Interpretando movimentos'}
@@ -3446,7 +3446,7 @@ function WalletHeroCard({
 }) {
   return (
     <View style={styles.walletHeroWrap}>
-      <LinearGradient colors={palette.id === 'dark' ? ['#262B33', '#14181E'] : ['#1F2227', '#3A404A']} style={styles.walletHeroCard}>
+      <LinearGradient colors={['#111111', '#111111']} style={styles.walletHeroCard}>
         <View style={styles.rowBetween}>
           <View>
             <Text style={styles.walletHeroEyebrow}>Norte Wallet</Text>
@@ -3491,9 +3491,9 @@ function WalletPassCard({
   index: number;
 }) {
   const tone = [
-    ['#23272D', '#111419'],
-    ['#2E3744', '#141B22'],
-    ['#6A4E20', '#1C1710'],
+    ['#111111', '#111111'],
+    ['#202020', '#111111'],
+    ['#303030', '#111111'],
   ][index % 3] as [string, string];
 
   return (
@@ -3952,7 +3952,7 @@ function createStyles(palette: ThemePalette) {
   },
   selectableCardActive: {
     borderColor: palette.borderStrong,
-    backgroundColor: palette.surfaceStrong,
+    backgroundColor: palette.surface,
   },
   pillRow: {
     flexDirection: 'row',
@@ -3977,7 +3977,7 @@ function createStyles(palette: ThemePalette) {
     fontWeight: '600',
   },
   pillTextActive: {
-    color: palette.text,
+    color: palette.id === 'light' ? '#FFFFFF' : palette.text,
   },
   card: {
     borderRadius: radius.lg,
@@ -4186,8 +4186,8 @@ function createStyles(palette: ThemePalette) {
     gap: spacing.md,
   },
   balanceSpotlight: {
-    borderRadius: 30,
-    backgroundColor: '#1A1C20',
+    borderRadius: radius.lg,
+    backgroundColor: '#111111',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.xl,
     gap: spacing.md,
@@ -4214,19 +4214,19 @@ function createStyles(palette: ThemePalette) {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#46C56A',
+    backgroundColor: '#21C45A',
   },
   balanceChipText: {
-    color: '#D6DBE3',
+    color: '#F2F2EF',
     fontSize: 11,
     fontWeight: '700',
   },
   balanceCaption: {
-    color: '#9FA8B7',
+    color: '#A0A0A0',
     fontSize: 13,
   },
   balanceAmount: {
-    color: '#FFFFFF',
+    color: '#F2F2EF',
     fontSize: 36,
     fontWeight: '700',
     letterSpacing: -1.2,
@@ -4243,12 +4243,12 @@ function createStyles(palette: ThemePalette) {
     gap: 6,
   },
   balanceBreakdownLabel: {
-    color: '#9FA8B7',
+    color: '#A0A0A0',
     fontSize: 12,
     fontWeight: '600',
   },
   balanceBreakdownValue: {
-    color: '#FFFFFF',
+    color: '#F2F2EF',
     fontSize: 18,
     fontWeight: '700',
     letterSpacing: -0.6,
@@ -4261,12 +4261,12 @@ function createStyles(palette: ThemePalette) {
     gap: 4,
   },
   balanceSpendableLabel: {
-    color: '#AEB7C3',
+    color: '#A0A0A0',
     fontSize: 12,
     fontWeight: '600',
   },
   balanceSpendableValue: {
-    color: '#FFFFFF',
+    color: '#F2F2EF',
     fontSize: 22,
     fontWeight: '700',
     letterSpacing: -0.8,
@@ -4292,7 +4292,7 @@ function createStyles(palette: ThemePalette) {
     justifyContent: 'center',
   },
   quickActionLabel: {
-    color: '#D7DCE4',
+    color: '#F2F2EF',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -4340,7 +4340,7 @@ function createStyles(palette: ThemePalette) {
     paddingBottom: spacing.md,
   },
   walletHeroCard: {
-    borderRadius: 30,
+    borderRadius: radius.lg,
     padding: spacing.xl,
     gap: spacing.xl,
     zIndex: 3,
@@ -4415,7 +4415,7 @@ function createStyles(palette: ThemePalette) {
     gap: spacing.md,
   },
   walletPassCard: {
-    borderRadius: 28,
+    borderRadius: radius.lg,
     padding: spacing.lg,
     minHeight: 186,
     justifyContent: 'space-between',
@@ -4548,7 +4548,7 @@ function createStyles(palette: ThemePalette) {
   goalTrack: {
     height: 6,
     borderRadius: radius.pill,
-    backgroundColor: palette.id === 'dark' ? 'rgba(255,255,255,0.08)' : '#ECE8DE',
+    backgroundColor: palette.id === 'dark' ? 'rgba(255,255,255,0.08)' : '#D8D8D4',
     overflow: 'hidden',
   },
   goalFill: {
@@ -4687,10 +4687,12 @@ function createStyles(palette: ThemePalette) {
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: '#111111',
   },
   orbLabel: {
-    color: palette.text,
+    color: '#F2F2EF',
     fontSize: 15,
     fontWeight: '600',
   },
@@ -4717,7 +4719,7 @@ function createStyles(palette: ThemePalette) {
     fontWeight: '700',
   },
   modeButtonTextActive: {
-    color: palette.text,
+    color: palette.id === 'light' ? '#FFFFFF' : palette.text,
   },
   quickPromptRow: {
     flexDirection: 'row',
@@ -5005,7 +5007,7 @@ function createStyles(palette: ThemePalette) {
     fontWeight: '600',
   },
   drawerItemTextActive: {
-    color: palette.text,
+    color: palette.id === 'light' ? '#FFFFFF' : palette.text,
   },
   bottomBar: {
     position: 'absolute',
@@ -5019,7 +5021,7 @@ function createStyles(palette: ThemePalette) {
     paddingTop: 10,
     paddingBottom: 12,
     borderRadius: radius.lg,
-    backgroundColor: '#0E1013',
+    backgroundColor: '#111111',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
     shadowColor: '#050608',
