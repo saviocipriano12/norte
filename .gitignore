@@ -28,6 +28,7 @@ yarn-error.*
 .codex-*
 .expo-web.log
 .expo-export-check*/
+.expo-export-*/
 .tmp-*
 .tmp-norte-audio/
 
