@@ -55,6 +55,7 @@ export type UpcomingBill = {
   title: string;
   due: string;
   amount: number;
+  context: EntryContext;
 };
 
 export type Goal = {
@@ -195,18 +196,21 @@ export const upcomingBills: UpcomingBill[] = [
     title: 'Internet',
     due: '2026-08-11',
     amount: 120,
+    context: 'Compartilhado',
   },
   {
     id: 'u2',
     title: 'DAS MEI',
     due: '2026-08-14',
     amount: 76,
+    context: 'Negocio',
   },
   {
     id: 'u3',
     title: 'Aluguel',
     due: '2026-08-18',
     amount: 1450,
+    context: 'Pessoal',
   },
 ];
 

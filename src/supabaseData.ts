@@ -63,7 +63,7 @@ type UserProfileInput = {
 };
 
 type GoalInput = Pick<Goal, 'title' | 'target' | 'current'>;
-type UpcomingBillInput = Pick<UpcomingBill, 'title' | 'amount' | 'due'>;
+type UpcomingBillInput = Pick<UpcomingBill, 'title' | 'amount' | 'due' | 'context'>;
 
 function requireSupabase() {
   if (!supabase) {
@@ -255,6 +255,7 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
             title: bill.title as string,
             amount: Number(bill.amount),
             due: bill.due_date as string,
+            context: (bill.context as UpcomingBill['context'] | null) ?? 'Pessoal',
           }))
         : initialUpcomingBills,
     movements: (movements ?? []).map((movement) => movementRowToApp(movement as never, accountMap)),
@@ -633,6 +634,7 @@ export async function createScheduledBill(session: Session, input: UpcomingBillI
       title: input.title,
       amount: input.amount,
       due_date: input.due,
+      context: input.context,
     })
     .select('*')
     .single();
@@ -646,6 +648,7 @@ export async function createScheduledBill(session: Session, input: UpcomingBillI
     title: data.title as string,
     amount: Number(data.amount),
     due: data.due_date as string,
+    context: data.context as UpcomingBill['context'],
   } satisfies UpcomingBill;
 }
 

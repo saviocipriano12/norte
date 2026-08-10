@@ -224,6 +224,10 @@ function sumAmounts(items: Array<{ amount: number }>) {
   return items.reduce((total, item) => total + item.amount, 0);
 }
 
+function personalContextWeight(context: EntryContext | undefined) {
+  return context === 'Negocio' ? 0 : context === 'Compartilhado' ? 0.5 : 1;
+}
+
 function createMessage(role: 'user' | 'assistant', text: string): Message {
   return {
     id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -427,7 +431,7 @@ export function NorteApp() {
         setAccountState(saved.accounts);
         setCardState(saved.cards ?? initialCards);
         setGoalState(saved.goals ?? goals);
-        setBillState(saved.upcomingBills ?? upcomingBills);
+        setBillState((saved.upcomingBills ?? upcomingBills).map((bill) => ({ ...bill, context: bill.context ?? 'Pessoal' })));
         setAssistantInput(saved.assistantInput);
       }
 
@@ -697,8 +701,15 @@ export function NorteApp() {
   const reserveBalance = accountState.find((account) => account.name === 'Reserva')?.balance ?? 0;
   const totalBalance = personalBalance + businessBalance + reserveBalance;
   const upcomingBillsTotal = sumAmounts(billState);
+  const personalBillsTotal = billState.reduce((total, bill) => total + bill.amount * personalContextWeight(bill.context), 0);
+  const businessBillsTotal = billState.reduce((total, bill) => total + bill.amount * movementBusinessWeight(bill.context), 0);
   const pendingIncome = sumAmounts(drafts.filter((draft) => draft.type === 'income'));
   const pendingExpense = sumAmounts(drafts.filter((draft) => draft.type === 'expense'));
+  const pendingPersonalExpense = drafts.reduce(
+    (total, draft) =>
+      total + (draft.type === 'expense' ? draft.amount * personalContextWeight(draft.context) : draft.context ? 0 : draft.amount),
+    0,
+  );
   const mixedAmount =
     sumAmounts(drafts.filter((draft) => draft.context === 'Compartilhado')) +
     sumAmounts(movements.filter((movement) => movement.context === 'Compartilhado'));
@@ -709,13 +720,13 @@ export function NorteApp() {
     return total + signedAmount * weight;
   }, 0);
 
-  const spendableToday = Math.max(personalBalance - upcomingBillsTotal - pendingExpense - 150, 0);
+  const spendableToday = Math.max(personalBalance - personalBillsTotal - pendingPersonalExpense - 150, 0);
 
   const summaryMetrics = [
     {
       label: 'Hoje voce pode gastar',
       value: currency.format(spendableToday),
-      detail: 'Ja descontando contas futuras e rascunhos de despesa pendentes.',
+      detail: 'Ja descontando sua parte das contas futuras e rascunhos de despesa pendentes.',
     },
     {
       label: 'Contas vencendo',
@@ -764,7 +775,7 @@ export function NorteApp() {
             };
 
   const businessHighlights = [
-    `Caixa atual do negocio: ${currency.format(businessBalance)}.`,
+    `Caixa atual do negocio: ${currency.format(businessBalance)}. ${currency.format(businessBillsTotal)} em contas futuras do negocio.`,
     mixedAmount > 0
       ? `Voce ainda tem ${currency.format(mixedAmount)} em itens compartilhados entre pessoal e negocio.`
       : 'Nenhum item compartilhado foi detectado ate agora.',
@@ -2095,6 +2106,7 @@ export function NorteApp() {
       title: billForm.title.trim(),
       amount,
       due: billForm.due.trim(),
+      context: billForm.context,
     };
 
     setBillState((items) => [...items, localBill]);
@@ -3113,6 +3125,19 @@ export function NorteApp() {
                       placeholderTextColor={palette.textMuted}
                       style={styles.field}
                     />
+                    <View style={styles.selectionBlock}>
+                      <Text style={styles.mutedText}>Essa conta e de</Text>
+                      <View style={styles.pillRow}>
+                        {(['Pessoal', 'Negocio', 'Compartilhado'] as EntryContext[]).map((context) => (
+                          <Pill
+                            key={context}
+                            label={context}
+                            selected={billForm.context === context}
+                            onPress={() => setBillForm((current) => ({ ...current, context }))}
+                          />
+                        ))}
+                      </View>
+                    </View>
                     <Pressable style={styles.primaryButtonCompact} onPress={handleSaveBill}>
                       <Text style={styles.primaryButtonText}>Salvar conta futura</Text>
                     </Pressable>
@@ -3123,7 +3148,9 @@ export function NorteApp() {
                     <View key={bill.id} style={styles.goalSubCard}>
                       <View style={styles.flexOne}>
                         <Text style={styles.cardTitle}>{bill.title}</Text>
-                        <Text style={styles.mutedText}>Vence {formatBillDue(bill.due)}</Text>
+                        <Text style={styles.mutedText}>
+                          Vence {formatBillDue(bill.due)} / {bill.context}
+                        </Text>
                       </View>
                       <View style={styles.billItemSide}>
                         <Text style={styles.amountNegative}>{currency.format(bill.amount)}</Text>
