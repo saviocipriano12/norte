@@ -25,12 +25,19 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+.codex-*
+.expo-web.log
+.expo-export-check*/
+.tmp-*
+.tmp-norte-audio/
 
 # macOS
 .DS_Store
 *.pem
 
 # local env files
+.env
+.env.*
 .env*.local
 
 # typescript

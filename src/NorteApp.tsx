@@ -1,0 +1,5117 @@
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import type { Session } from '@supabase/supabase-js';
+import {
+  Alert,
+  Modal,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { Platform } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+
+import type { AssistantTurnResponse } from './assistantTypes';
+import { AuthScreen } from './AuthScreen';
+import { applyMovementToAccounts, buildMovementFromDraft, formatMovementDate, movementBusinessWeight, parseCurrencyInput } from './financeEngine';
+import { NorteOrb } from './NorteOrb';
+import { createRealtimeTransport, isRealtimeVoiceSupported, type RealtimeTransport } from './realtimeTransport';
+import {
+  askNorteAssistant,
+  createNorteRealtimeSession,
+  getNorteApiBaseUrl,
+  getNorteAssistantHealth,
+  speakNorteText,
+  syncNorteAssistantTurn,
+  transcribeNorteAudio,
+  type NorteAssistantHealth,
+} from './norteApi';
+import {
+  goals,
+  initialAccounts,
+  initialCards,
+  initialAssistantInput,
+  initialDrafts,
+  initialMessages,
+  initialMovements,
+  onboardingProfiles,
+  painPoints,
+  upcomingBills,
+  type Account,
+  type AppTab,
+  type DraftEntry,
+  type EntryContext,
+  type Goal,
+  type Message,
+  type Movement,
+  type OrbMode,
+  type UpcomingBill,
+  type WalletCard,
+} from './mockData';
+import { loadPersistedState, savePersistedState } from './storage';
+import {
+  createMovement,
+  createGoal,
+  createScheduledBill,
+  createWalletAccount,
+  createWalletCard,
+  deleteMovement,
+  deleteGoal,
+  deleteScheduledBill,
+  deleteRemoteDraft,
+  deleteWalletAccount,
+  deleteWalletCard,
+  ensureUserProfile,
+  loadWorkspaceSnapshot,
+  persistConfirmedDrafts,
+  persistManualMovement,
+  updateMovement,
+  updateRemoteDraftContext,
+  updateWalletAccount,
+  updateWalletCard,
+} from './supabaseData';
+import { isSupabaseConfigured, supabase } from './supabase';
+import { appThemes, radius, spacing, type ThemeMode, type ThemePalette } from './theme';
+
+const STORAGE_KEY = '@norte/mvp-state-v1';
+
+const currency = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL',
+  maximumFractionDigits: 0,
+});
+
+type OnboardingProfile = (typeof onboardingProfiles)[number]['id'];
+type FocusPanel = 'business' | 'analysis' | 'settings';
+type DrawerDestination = AppTab | FocusPanel;
+
+type ManualEntryState = {
+  title: string;
+  amount: string;
+  type: 'income' | 'expense';
+  context: EntryContext;
+  accountId: string;
+  cardId: string;
+};
+
+type AccountFormState = {
+  name: string;
+  detail: string;
+  kind: string;
+  isBusiness: boolean;
+};
+
+type CardFormState = {
+  name: string;
+  limit: string;
+  used: string;
+  walletAccountId: string;
+};
+
+type GoalFormState = {
+  title: string;
+  target: string;
+  current: string;
+};
+
+type BillFormState = {
+  title: string;
+  amount: string;
+  due: string;
+  context: EntryContext;
+};
+
+type MovementTypeFilter = 'all' | 'income' | 'expense';
+type MovementContextFilter = 'all' | EntryContext;
+
+type PersistedState = {
+  step: 'welcome' | 'onboarding' | 'app';
+  onboardingIndex: number;
+  profile: OnboardingProfile;
+  selectedPain: string[];
+  themeMode: ThemeMode;
+  activeTab: AppTab;
+  focusPanel: FocusPanel;
+  messages: Message[];
+  drafts: DraftEntry[];
+  movements: Movement[];
+  accounts: Account[];
+  cards: WalletCard[];
+  goals?: Goal[];
+  upcomingBills?: UpcomingBill[];
+  assistantInput: string;
+};
+
+const dockTabItems: Array<{
+  key: AppTab;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  activeIcon: keyof typeof Ionicons.glyphMap;
+}> = [
+  { key: 'home', label: 'Home', icon: 'home-outline', activeIcon: 'home' },
+  { key: 'moves', label: 'Movs', icon: 'swap-horizontal-outline', activeIcon: 'swap-horizontal' },
+  { key: 'wallet', label: 'Carteira', icon: 'wallet-outline', activeIcon: 'wallet' },
+  { key: 'plan', label: 'Metas', icon: 'flag-outline', activeIcon: 'flag' },
+];
+
+const leftDockTabs = dockTabItems.slice(0, 2);
+const rightDockTabs = dockTabItems.slice(2);
+const goalAccentPalette = ['#1F2227', '#F5A524', '#43C463', '#5D7EF8', '#C7CDD6'];
+const assistantPromptSuggestions = [
+  'Organize meu dia financeiro',
+  'Quanto posso gastar hoje?',
+  'O que vence esta semana?',
+];
+const styleCache = new Map<ThemeMode, ReturnType<typeof createStyles>>();
+let palette: ThemePalette = appThemes.dark;
+let activeThemeMode: ThemeMode = 'dark';
+let styles = createStyles(palette);
+
+function getStyles(themeMode: ThemeMode) {
+  const cached = styleCache.get(themeMode);
+
+  if (cached) {
+    return cached;
+  }
+
+  const nextStyles = createStyles(appThemes[themeMode]);
+  styleCache.set(themeMode, nextStyles);
+  return nextStyles;
+}
+
+const defaultManualEntry: ManualEntryState = {
+  title: '',
+  amount: '',
+  type: 'expense',
+  context: 'Pessoal',
+  accountId: '',
+  cardId: '',
+};
+
+const defaultAccountForm: AccountFormState = {
+  name: '',
+  detail: '',
+  kind: 'cash',
+  isBusiness: false,
+};
+
+const defaultCardForm: CardFormState = {
+  name: '',
+  limit: '',
+  used: '',
+  walletAccountId: '',
+};
+
+const defaultGoalForm: GoalFormState = {
+  title: '',
+  target: '',
+  current: '0',
+};
+
+const defaultBillForm: BillFormState = {
+  title: '',
+  amount: '',
+  due: '',
+  context: 'Pessoal',
+};
+
+function sumAmounts(items: Array<{ amount: number }>) {
+  return items.reduce((total, item) => total + item.amount, 0);
+}
+
+function createMessage(role: 'user' | 'assistant', text: string): Message {
+  return {
+    id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    role,
+    text,
+  };
+}
+
+function confirmDestructiveAction(title: string, message: string, onConfirm: () => void | Promise<void>) {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${message}`)) {
+      void onConfirm();
+    }
+    return;
+  }
+
+  Alert.alert(title, message, [
+    { text: 'Cancelar', style: 'cancel' },
+    { text: 'Excluir', style: 'destructive', onPress: () => void onConfirm() },
+  ]);
+}
+
+function showNotice(title: string, message: string) {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined') {
+      window.alert(`${title}\n\n${message}`);
+    }
+    return;
+  }
+
+  Alert.alert(title, message);
+}
+
+function formatBillDue(value: string) {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00`) : null;
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const startOfDue = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayDifference = Math.round((startOfDue.getTime() - startOfToday.getTime()) / 86400000);
+
+  if (dayDifference === 0) {
+    return 'Hoje';
+  }
+
+  if (dayDifference === 1) {
+    return 'Amanha';
+  }
+
+  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+}
+
+function pickAccountForContext(accounts: Account[], context: EntryContext | undefined) {
+  if (accounts.length === 0) {
+    return null;
+  }
+
+  if (context === 'Negocio') {
+    return accounts.find((account) => account.isBusiness) ?? accounts[0];
+  }
+
+  return accounts.find((account) => !account.isBusiness) ?? accounts[0];
+}
+
+function inferContextReply(message: string): EntryContext | null {
+  const normalized = message
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
+  if (!normalized || normalized.length > 56 || /\d/.test(normalized)) {
+    return null;
+  }
+
+  if (/(compartilh|dividid|metade|casa e trabalho|pessoal e negocio)/.test(normalized)) {
+    return 'Compartilhado';
+  }
+
+  if (/(negocio|empresa|pj|trabalho|cliente)/.test(normalized)) {
+    return 'Negocio';
+  }
+
+  if (/(pessoal|minha casa|particular|meu uso)/.test(normalized)) {
+    return 'Pessoal';
+  }
+
+  return null;
+}
+
+export function NorteApp() {
+  const [isHydrating, setIsHydrating] = useState(true);
+  const [isAuthLoading, setIsAuthLoading] = useState(isSupabaseConfigured());
+  const [isRemoteSyncing, setIsRemoteSyncing] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [step, setStep] = useState<'welcome' | 'onboarding' | 'app'>('welcome');
+  const [onboardingIndex, setOnboardingIndex] = useState(0);
+  const [profile, setProfile] = useState<OnboardingProfile>('freelancer');
+  const [selectedPain, setSelectedPain] = useState<string[]>([
+    'Misturo pessoal com negocio',
+    'Nao sei quanto posso gastar',
+  ]);
+  const [themeMode, setThemeMode] = useState<ThemeMode>('light');
+  const [assistantMode, setAssistantMode] = useState<OrbMode>('idle');
+  const [isAssistantLoading, setIsAssistantLoading] = useState(false);
+  const [assistantError, setAssistantError] = useState<string | null>(null);
+  const [assistantHealth, setAssistantHealth] = useState<NorteAssistantHealth | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isConversationMode, setIsConversationMode] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [lastSpeechText, setLastSpeechText] = useState('');
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<AppTab>('assistant');
+  const [focusPanel, setFocusPanel] = useState<FocusPanel>('business');
+  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [drafts, setDrafts] = useState<DraftEntry[]>(initialDrafts);
+  const [movements, setMovements] = useState<Movement[]>(initialMovements);
+  const [accountState, setAccountState] = useState<Account[]>(initialAccounts);
+  const [cardState, setCardState] = useState<WalletCard[]>(initialCards);
+  const [goalState, setGoalState] = useState<Goal[]>(goals);
+  const [billState, setBillState] = useState<UpcomingBill[]>(upcomingBills);
+  const [assistantInput, setAssistantInput] = useState(initialAssistantInput);
+  const [showManualEntry, setShowManualEntry] = useState(false);
+  const [manualEntry, setManualEntry] = useState<ManualEntryState>(defaultManualEntry);
+  const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
+  const [showAccountForm, setShowAccountForm] = useState(false);
+  const [accountForm, setAccountForm] = useState<AccountFormState>(defaultAccountForm);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [showCardForm, setShowCardForm] = useState(false);
+  const [cardForm, setCardForm] = useState<CardFormState>(defaultCardForm);
+  const [editingCardId, setEditingCardId] = useState<string | null>(null);
+  const [showGoalForm, setShowGoalForm] = useState(false);
+  const [goalForm, setGoalForm] = useState<GoalFormState>(defaultGoalForm);
+  const [showBillForm, setShowBillForm] = useState(false);
+  const [billForm, setBillForm] = useState<BillFormState>(defaultBillForm);
+  const [movementTypeFilter, setMovementTypeFilter] = useState<MovementTypeFilter>('all');
+  const [movementContextFilter, setMovementContextFilter] = useState<MovementContextFilter>('all');
+  const recorderRef = useRef<any>(null);
+  const recorderStreamRef = useRef<any>(null);
+  const recorderChunksRef = useRef<any[]>([]);
+  const recognitionRef = useRef<any>(null);
+  const recognitionFinalRef = useRef('');
+  const conversationModeRef = useRef(false);
+  const audioContextRef = useRef<any>(null);
+  const analyserRef = useRef<any>(null);
+  const sourceNodeRef = useRef<any>(null);
+  const silenceTimeoutRef = useRef<any>(null);
+  const hasDetectedSpeechRef = useRef(false);
+  const monitoringFrameRef = useRef<number | null>(null);
+  const currentAudioRef = useRef<any>(null);
+  const currentAudioUrlRef = useRef<string | null>(null);
+  const realtimeTransportRef = useRef<RealtimeTransport | null>(null);
+  const realtimeChannelRef = useRef<any>(null);
+  const realtimePeerRef = useRef<any>(null);
+  const realtimeStreamRef = useRef<any>(null);
+  const realtimeAudioRef = useRef<any>(null);
+  const pendingVoiceMessageRef = useRef('');
+  const pendingAssistantTranscriptRef = useRef('');
+  const voiceToolHandledRef = useRef(false);
+
+  const refreshAssistantHealth = async () => {
+    try {
+      const health = await getNorteAssistantHealth();
+      setAssistantHealth(health);
+      return health;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nao consegui validar o backend da IA.';
+      setAssistantError(message);
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    async function hydrate() {
+      const saved = await loadPersistedState<PersistedState>(STORAGE_KEY);
+
+      if (!active) {
+        return;
+      }
+
+      if (saved) {
+        setStep(saved.step);
+        setOnboardingIndex(saved.onboardingIndex);
+        setProfile(saved.profile);
+        setSelectedPain(saved.selectedPain);
+        setThemeMode(saved.themeMode ?? 'light');
+        setActiveTab(saved.activeTab);
+        setFocusPanel(saved.focusPanel);
+        setMessages(saved.messages);
+        setDrafts(saved.drafts);
+        setMovements(saved.movements);
+        setAccountState(saved.accounts);
+        setCardState(saved.cards ?? initialCards);
+        setGoalState(saved.goals ?? goals);
+        setBillState(saved.upcomingBills ?? upcomingBills);
+        setAssistantInput(saved.assistantInput);
+      }
+
+      setIsHydrating(false);
+    }
+
+    hydrate();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) {
+      setIsAuthLoading(false);
+      return;
+    }
+
+    let active = true;
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) {
+        return;
+      }
+
+      if (error) {
+        setAuthError(error.message);
+      }
+
+      setSession(data.session);
+      setIsAuthLoading(false);
+    });
+
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setIsAuthLoading(false);
+    });
+
+    return () => {
+      active = false;
+      subscription.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user || !supabase) {
+      return;
+    }
+
+    let active = true;
+
+    async function bootstrapRemote() {
+      const user = session!.user;
+      setIsRemoteSyncing(true);
+
+      try {
+        await ensureUserProfile({
+          userId: user.id,
+          fullName: (user.user_metadata?.full_name as string | undefined) ?? user.email ?? '',
+          onboardingProfile: profile,
+          selectedPainPoints: selectedPain,
+        });
+
+        const snapshot = await loadWorkspaceSnapshot(user.id);
+
+        if (!active || !snapshot) {
+          return;
+        }
+
+        setAccountState(snapshot.accounts);
+        setCardState(snapshot.cards);
+        setGoalState(snapshot.goals);
+        setBillState(snapshot.upcomingBills);
+        setMovements(snapshot.movements);
+        setDrafts(
+          snapshot.drafts.map((draft) => ({
+            ...draft,
+            walletAccountId: draft.walletAccountId ?? pickAccountForContext(snapshot.accounts, draft.context)?.id ?? null,
+          })),
+        );
+        setMessages(snapshot.messages);
+      } catch (error) {
+        if (active) {
+          setAuthError(error instanceof Error ? error.message : 'Falha ao sincronizar com o Supabase.');
+        }
+      } finally {
+        if (active) {
+          setIsRemoteSyncing(false);
+        }
+      }
+    }
+
+    bootstrapRemote();
+
+    return () => {
+      active = false;
+    };
+  }, [profile, selectedPain, session?.user, session?.user?.id]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadAssistantHealth() {
+      const health = await refreshAssistantHealth();
+
+      if (active && health) {
+        setAssistantHealth(health);
+      }
+    }
+
+    void loadAssistantHealth();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'assistant') {
+      void refreshAssistantHealth();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    conversationModeRef.current = isConversationMode;
+  }, [isConversationMode]);
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop?.();
+        recognitionRef.current = null;
+      }
+
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        recorderRef.current.stop();
+      }
+
+      if (recorderStreamRef.current) {
+        recorderStreamRef.current.getTracks?.().forEach((track: { stop: () => void }) => track.stop());
+      }
+
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current);
+      }
+
+      if (monitoringFrameRef.current && typeof cancelAnimationFrame !== 'undefined') {
+        cancelAnimationFrame(monitoringFrameRef.current);
+      }
+
+      sourceNodeRef.current?.disconnect?.();
+      analyserRef.current?.disconnect?.();
+      audioContextRef.current?.close?.();
+
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause?.();
+      }
+
+      if (currentAudioUrlRef.current && typeof URL !== 'undefined') {
+        URL.revokeObjectURL(currentAudioUrlRef.current);
+      }
+
+      if (realtimeChannelRef.current) {
+        realtimeChannelRef.current.close?.();
+      }
+
+      if (realtimePeerRef.current) {
+        realtimePeerRef.current.getSenders?.().forEach((sender: any) => sender.track?.stop?.());
+        realtimePeerRef.current.close?.();
+      }
+
+      if (realtimeStreamRef.current) {
+        realtimeStreamRef.current.getTracks?.().forEach((track: { stop: () => void }) => track.stop());
+      }
+
+      if (realtimeAudioRef.current) {
+        realtimeAudioRef.current.pause?.();
+        realtimeAudioRef.current.srcObject = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isHydrating) {
+      return;
+    }
+
+    savePersistedState(STORAGE_KEY, {
+      step,
+      onboardingIndex,
+      profile,
+      selectedPain,
+      themeMode,
+      activeTab,
+      focusPanel,
+      messages,
+      drafts,
+      movements,
+      accounts: accountState,
+      cards: cardState,
+      goals: goalState,
+      upcomingBills: billState,
+      assistantInput,
+    } satisfies PersistedState);
+  }, [
+    accountState,
+    activeTab,
+    assistantInput,
+    drafts,
+    goalState,
+    focusPanel,
+    isHydrating,
+    messages,
+    movements,
+    onboardingIndex,
+    profile,
+    selectedPain,
+    step,
+    themeMode,
+    cardState,
+    billState,
+  ]);
+
+  useEffect(() => {
+    if (manualEntry.accountId || accountState.length === 0) {
+      return;
+    }
+
+    setManualEntry((current) => ({
+      ...current,
+      accountId: accountState[0].id,
+    }));
+  }, [accountState, manualEntry.accountId]);
+
+  const pendingQuestions = drafts.filter((draft) => !draft.context).length;
+  const userDisplayName =
+    (session?.user?.user_metadata?.full_name as string | undefined)?.trim() ||
+    session?.user?.email?.split('@')[0] ||
+    'Seu Norte';
+  const userInitials = userDisplayName
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('');
+  const userFirstName = userDisplayName.split(' ')[0] ?? userDisplayName;
+  const sortedMovements = useMemo(
+    () => [...movements].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    [movements],
+  );
+  const visibleMovements = useMemo(
+    () =>
+      sortedMovements.filter(
+        (movement) =>
+          (movementTypeFilter === 'all' || movement.type === movementTypeFilter) &&
+          (movementContextFilter === 'all' || movement.context === movementContextFilter),
+      ),
+    [movementContextFilter, movementTypeFilter, sortedMovements],
+  );
+  const visibleMovementTotal = sumAmounts(visibleMovements);
+  const manualEntryAccount = accountState.find((account) => account.id === manualEntry.accountId) ?? accountState[0] ?? null;
+  const manualEntryCard = cardState.find((card) => card.id === manualEntry.cardId) ?? null;
+
+  const personalBalance = accountState.find((account) => account.name === 'Conta pessoal')?.balance ?? 0;
+  const businessBalance = accountState.find((account) => account.name === 'Conta PJ')?.balance ?? 0;
+  const reserveBalance = accountState.find((account) => account.name === 'Reserva')?.balance ?? 0;
+  const totalBalance = personalBalance + businessBalance + reserveBalance;
+  const upcomingBillsTotal = sumAmounts(billState);
+  const pendingIncome = sumAmounts(drafts.filter((draft) => draft.type === 'income'));
+  const pendingExpense = sumAmounts(drafts.filter((draft) => draft.type === 'expense'));
+  const mixedAmount =
+    sumAmounts(drafts.filter((draft) => draft.context === 'Compartilhado')) +
+    sumAmounts(movements.filter((movement) => movement.context === 'Compartilhado'));
+
+  const businessProfit = movements.reduce((total, movement) => {
+    const weight = movementBusinessWeight(movement.context);
+    const signedAmount = movement.type === 'income' ? movement.amount : -movement.amount;
+    return total + signedAmount * weight;
+  }, 0);
+
+  const spendableToday = Math.max(personalBalance - upcomingBillsTotal - pendingExpense - 150, 0);
+
+  const summaryMetrics = [
+    {
+      label: 'Hoje voce pode gastar',
+      value: currency.format(spendableToday),
+      detail: 'Ja descontando contas futuras e rascunhos de despesa pendentes.',
+    },
+    {
+      label: 'Contas vencendo',
+      value: `${billState.length}`,
+      detail: `${currency.format(upcomingBillsTotal)} previstos nas proximas cobrancas.`,
+    },
+    {
+      label: 'A receber em rascunhos',
+      value: currency.format(pendingIncome),
+      detail: pendingIncome > 0 ? 'Entradas detectadas pela IA aguardando sua confirmacao.' : 'Nenhuma entrada pendente agora.',
+    },
+    {
+      label: 'Lucro do negocio',
+      value: currency.format(businessProfit),
+      detail: 'Estimativa com base nos movimentos salvos e nos itens compartilhados ponderados.',
+    },
+  ];
+
+  const northGuidance =
+    pendingQuestions > 0
+      ? {
+          eyebrow: 'Proximo passo',
+          title: 'Termine de classificar seus rascunhos',
+          description: `Faltam ${pendingQuestions} resposta${pendingQuestions > 1 ? 's' : ''} para o Norte atualizar seus saldos com seguranca.`,
+          icon: 'help-circle-outline' as keyof typeof Ionicons.glyphMap,
+        }
+      : spendableToday <= 0
+        ? {
+            eyebrow: 'Atencao ao caixa',
+            title: 'Seu limite de hoje esta comprometido',
+            description: 'As contas previstas e os gastos pendentes ja consomem o valor livre da sua conta pessoal.',
+            icon: 'alert-circle-outline' as keyof typeof Ionicons.glyphMap,
+          }
+        : businessProfit < 0
+          ? {
+              eyebrow: 'Visao do negocio',
+              title: 'O caixa do negocio pede uma revisao',
+              description: `As despesas do periodo superam as entradas em ${currency.format(Math.abs(businessProfit))}.`,
+              icon: 'trending-down-outline' as keyof typeof Ionicons.glyphMap,
+            }
+          : {
+              eyebrow: 'Seu Norte de hoje',
+              title: `Voce pode gastar ${currency.format(spendableToday)} com tranquilidade`,
+              description: 'Esse valor ja considera contas previstas, despesas pendentes e uma margem de seguranca.',
+              icon: 'compass-outline' as keyof typeof Ionicons.glyphMap,
+            };
+
+  const businessHighlights = [
+    `Caixa atual do negocio: ${currency.format(businessBalance)}.`,
+    mixedAmount > 0
+      ? `Voce ainda tem ${currency.format(mixedAmount)} em itens compartilhados entre pessoal e negocio.`
+      : 'Nenhum item compartilhado foi detectado ate agora.',
+    pendingQuestions > 0
+      ? `A IA ainda precisa confirmar ${pendingQuestions} classificacoes antes de salvar tudo.`
+    : 'Nao ha duvidas pendentes na sua fila de rascunhos.',
+  ];
+
+  const personalIncome = movements.reduce(
+    (total, movement) =>
+      total + (movement.type === 'income' ? movement.amount * (movement.context === 'Compartilhado' ? 0.5 : movement.context === 'Pessoal' ? 1 : 0) : 0),
+    0,
+  );
+  const personalExpenses = movements.reduce(
+    (total, movement) =>
+      total + (movement.type === 'expense' ? movement.amount * (movement.context === 'Compartilhado' ? 0.5 : movement.context === 'Pessoal' ? 1 : 0) : 0),
+    0,
+  );
+  const businessIncome = movements.reduce(
+    (total, movement) => total + (movement.type === 'income' ? movement.amount * movementBusinessWeight(movement.context) : 0),
+    0,
+  );
+  const businessExpenses = movements.reduce(
+    (total, movement) => total + (movement.type === 'expense' ? movement.amount * movementBusinessWeight(movement.context) : 0),
+    0,
+  );
+  const businessResult = businessIncome - businessExpenses;
+  const businessMargin = businessIncome > 0 ? Math.round((businessResult / businessIncome) * 100) : 0;
+  const analysisMetrics = [
+    { label: 'Resultado pessoal', value: currency.format(personalIncome - personalExpenses), detail: 'Entradas menos despesas pessoais e compartilhadas.' },
+    { label: 'Resultado do negocio', value: currency.format(businessResult), detail: `${businessIncome > 0 ? `${businessMargin}% de margem` : 'Sem receitas classificadas'} no historico salvo.` },
+    { label: 'Comprometido', value: currency.format(upcomingBillsTotal + pendingExpense), detail: 'Contas futuras e despesas aguardando confirmacao.' },
+    { label: 'Caixa PJ atual', value: currency.format(businessBalance), detail: 'Saldo informado na conta do negocio.' },
+  ];
+
+  const analysisHighlights = [
+    `${movements.length} movimentos estao salvos localmente neste aparelho.`,
+    `Seu caixa pessoal esta em ${currency.format(personalBalance)} e sua reserva em ${currency.format(reserveBalance)}.`,
+    pendingExpense > 0
+      ? `Se voce confirmar os rascunhos de despesa, o impacto adicional sera de ${currency.format(pendingExpense)}.`
+      : 'Nao existem despesas novas aguardando confirmacao.',
+  ];
+
+  const handlePainToggle = (value: string) => {
+    setSelectedPain((current) =>
+      current.includes(value) ? current.filter((item) => item !== value) : [...current, value],
+    );
+  };
+
+  const handleDraftContext = (id: string, context: EntryContext) => {
+    setDrafts((current) =>
+      current.map((draft) =>
+        draft.id === id
+          ? {
+              ...draft,
+              context,
+              walletAccountId: pickAccountForContext(accountState, context)?.id ?? draft.walletAccountId ?? null,
+              question: undefined,
+              note:
+                draft.type === 'income'
+                  ? 'Entrada pronta para confirmacao.'
+                  : context === 'Compartilhado'
+                    ? 'Despesa compartilhada pronta para confirmacao.'
+                    : 'Despesa pronta para confirmacao.',
+            }
+          : draft,
+      ),
+    );
+
+    if (session && supabase) {
+      void updateRemoteDraftContext(id, context);
+    }
+  };
+
+  const handleDraftAccount = (id: string, walletAccountId: string) => {
+    setDrafts((current) =>
+      current.map((draft) =>
+        draft.id === id
+          ? {
+              ...draft,
+              walletAccountId,
+            }
+          : draft,
+      ),
+    );
+  };
+
+  const handleRemoveDraft = (id: string) => {
+    setDrafts((current) => current.filter((draft) => draft.id !== id));
+
+    if (session && supabase) {
+      void deleteRemoteDraft(id);
+    }
+  };
+
+  const handleAuthSubmit = async (input: {
+    email: string;
+    password: string;
+    fullName?: string;
+    mode: 'signin' | 'signup';
+  }) => {
+    if (!supabase) {
+      setAuthError('Supabase nao configurado.');
+      return;
+    }
+
+    setIsAuthLoading(true);
+    setAuthError(null);
+
+    try {
+      if (input.mode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({
+          email: input.email.trim(),
+          password: input.password,
+          options: {
+            data: {
+              full_name: input.fullName?.trim() || '',
+            },
+          },
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        if (!data.session) {
+          setAuthError('Conta criada. Se a confirmacao de email estiver ativa, confirme e depois entre.');
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: input.email.trim(),
+          password: input.password,
+        });
+
+        if (error) {
+          throw error;
+        }
+      }
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Falha na autenticacao.');
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (!supabase) {
+      return;
+    }
+
+    await supabase.auth.signOut();
+    setMessages(initialMessages);
+    setDrafts(initialDrafts);
+    setMovements([]);
+    setAccountState(initialAccounts);
+    setCardState(initialCards);
+    setGoalState(goals);
+    setBillState(upcomingBills);
+    setActiveTab('assistant');
+    setFocusPanel('business');
+    setIsDrawerOpen(false);
+    setIsProfileOpen(false);
+  };
+
+  const handleDrawerNavigate = (destination: DrawerDestination) => {
+    if (destination === 'business' || destination === 'analysis' || destination === 'settings') {
+      setActiveTab('home');
+      setFocusPanel(destination);
+    } else {
+      setActiveTab(destination);
+    }
+
+    setIsDrawerOpen(false);
+  };
+
+  const refreshWorkspaceFromCloud = async () => {
+    if (!session || !supabase) {
+      return;
+    }
+
+    const snapshot = await loadWorkspaceSnapshot(session.user.id);
+
+    if (!snapshot) {
+      return;
+    }
+
+    setAccountState(snapshot.accounts);
+    setCardState(snapshot.cards);
+    setGoalState(snapshot.goals);
+    setBillState(snapshot.upcomingBills);
+    setMovements(snapshot.movements);
+    setDrafts(snapshot.drafts);
+    setMessages(snapshot.messages);
+  };
+
+  const stopAssistantPlayback = () => {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause?.();
+      currentAudioRef.current = null;
+    }
+
+    if (currentAudioUrlRef.current && typeof URL !== 'undefined') {
+      URL.revokeObjectURL(currentAudioUrlRef.current);
+      currentAudioUrlRef.current = null;
+    }
+
+    setIsSpeaking(false);
+  };
+
+  const stopAudioMonitoring = () => {
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current);
+      silenceTimeoutRef.current = null;
+    }
+
+    if (monitoringFrameRef.current && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(monitoringFrameRef.current);
+      monitoringFrameRef.current = null;
+    }
+
+    sourceNodeRef.current?.disconnect?.();
+    analyserRef.current?.disconnect?.();
+    sourceNodeRef.current = null;
+    analyserRef.current = null;
+    audioContextRef.current?.close?.();
+    audioContextRef.current = null;
+    hasDetectedSpeechRef.current = false;
+  };
+
+  const sendRealtimeEvent = (event: Record<string, unknown>) => {
+    const channel = realtimeChannelRef.current;
+
+    if (!channel || channel.readyState !== 'open') {
+      return;
+    }
+
+    channel.send(JSON.stringify(event));
+  };
+
+  const stopRealtimeConversation = () => {
+    const channel = realtimeChannelRef.current;
+    if (channel) {
+      channel.close?.();
+      realtimeChannelRef.current = null;
+    }
+
+    const peer = realtimePeerRef.current;
+    if (peer) {
+      peer.getSenders?.().forEach((sender: any) => sender.track?.stop?.());
+      peer.close?.();
+      realtimePeerRef.current = null;
+    }
+
+    if (realtimeStreamRef.current) {
+      realtimeStreamRef.current.getTracks?.().forEach((track: { stop: () => void }) => track.stop());
+      realtimeStreamRef.current = null;
+    }
+
+    if (realtimeAudioRef.current) {
+      realtimeAudioRef.current.pause?.();
+      realtimeAudioRef.current.srcObject = null;
+      realtimeAudioRef.current = null;
+    }
+
+    pendingVoiceMessageRef.current = '';
+    pendingAssistantTranscriptRef.current = '';
+    voiceToolHandledRef.current = false;
+  };
+
+  const playAssistantSpeech = async (text: string) => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      stopAssistantPlayback();
+      setIsSpeaking(true);
+
+      const audioBlob = await speakNorteText(text);
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+
+      currentAudioRef.current = audio;
+      currentAudioUrlRef.current = audioUrl;
+
+      audio.onended = () => {
+        stopAssistantPlayback();
+        if (conversationModeRef.current && !realtimePeerRef.current) {
+          setTimeout(() => {
+            void handleVoiceCapture(true);
+          }, 350);
+        } else {
+          setAssistantMode('idle');
+        }
+      };
+
+      audio.onerror = () => {
+        stopAssistantPlayback();
+        setAssistantMode('idle');
+        setAssistantError('Nao consegui reproduzir a voz da Norte IA agora.');
+      };
+
+      await audio.play();
+    } catch (error) {
+      stopAssistantPlayback();
+      setAssistantMode('idle');
+      setAssistantError(error instanceof Error ? error.message : 'Falha ao reproduzir a voz da Norte IA.');
+    }
+  };
+
+  const stopVoiceCapture = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      recorderRef.current.stop();
+    }
+
+    if (recorderStreamRef.current) {
+      recorderStreamRef.current.getTracks?.().forEach((track: { stop: () => void }) => track.stop());
+      recorderStreamRef.current = null;
+    }
+
+    stopAudioMonitoring();
+    setIsRecording(false);
+    setLiveTranscript('');
+    recognitionFinalRef.current = '';
+  };
+
+  const startRecordedAudioCapture = async () => {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+      setAssistantError('O modo de voz por enquanto funciona no navegador.');
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setAssistantError('Seu navegador nao suporta gravacao de audio para a Norte IA.');
+      return;
+    }
+
+    try {
+      setAssistantError(null);
+      stopAssistantPlayback();
+      setAssistantMode('listening');
+      setIsRecording(true);
+      setLiveTranscript('Pode falar, estou ouvindo...');
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recorderStreamRef.current = stream;
+      recorderChunksRef.current = [];
+
+      const preferredMimeType =
+        typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm';
+
+      const recorder = new MediaRecorder(stream, { mimeType: preferredMimeType });
+      recorderRef.current = recorder;
+
+      const AudioContextCtor = (window as any).AudioContext ?? (window as any).webkitAudioContext;
+      if (AudioContextCtor) {
+        const audioContext = new AudioContextCtor();
+        const analyser = audioContext.createAnalyser();
+        const source = audioContext.createMediaStreamSource(stream);
+        source.connect(analyser);
+        analyser.fftSize = 2048;
+        analyserRef.current = analyser;
+        sourceNodeRef.current = source;
+        audioContextRef.current = audioContext;
+
+        const sampleBuffer = new Uint8Array(analyser.fftSize);
+        const silenceThreshold = 9;
+        const silenceMs = 1100;
+
+        const monitorAudio = () => {
+          if (!analyserRef.current || !recorderRef.current || recorderRef.current.state === 'inactive') {
+            monitoringFrameRef.current = null;
+            return;
+          }
+
+          analyser.getByteTimeDomainData(sampleBuffer);
+
+          let total = 0;
+          for (const sample of sampleBuffer) {
+            total += Math.abs(sample - 128);
+          }
+
+          const averageLevel = total / sampleBuffer.length;
+
+          if (averageLevel > silenceThreshold) {
+            hasDetectedSpeechRef.current = true;
+            setLiveTranscript('Entendendo sua fala...');
+
+            if (silenceTimeoutRef.current) {
+              clearTimeout(silenceTimeoutRef.current);
+              silenceTimeoutRef.current = null;
+            }
+          } else if (hasDetectedSpeechRef.current && !silenceTimeoutRef.current) {
+            silenceTimeoutRef.current = setTimeout(() => {
+              silenceTimeoutRef.current = null;
+              stopVoiceCapture();
+            }, silenceMs);
+          }
+
+          monitoringFrameRef.current = requestAnimationFrame(monitorAudio);
+        };
+
+        monitoringFrameRef.current = requestAnimationFrame(monitorAudio);
+      }
+
+      recorder.ondataavailable = (event: any) => {
+        if (event.data?.size) {
+          recorderChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        setIsRecording(false);
+        recorderRef.current = null;
+        recorderStreamRef.current?.getTracks?.().forEach((track: { stop: () => void }) => track.stop());
+        recorderStreamRef.current = null;
+        stopAudioMonitoring();
+
+        const audioBlob = new Blob(recorderChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        recorderChunksRef.current = [];
+
+        if (audioBlob.size === 0) {
+          setAssistantMode('idle');
+          setAssistantError('Nao recebi audio suficiente para transcrever.');
+          return;
+        }
+
+        try {
+          setAssistantMode('thinking');
+          setLiveTranscript('Transcrevendo com a OpenAI...');
+          const transcription = await transcribeNorteAudio(audioBlob, `norte-audio.${preferredMimeType.includes('webm') ? 'webm' : 'wav'}`);
+          const transcript = transcription.text.trim();
+
+          if (!transcript) {
+            setLiveTranscript('');
+            setAssistantMode('idle');
+            setAssistantError('Nao consegui entender o que foi dito.');
+            return;
+          }
+
+          setLiveTranscript(transcript);
+          setAssistantInput(transcript);
+          await handleInterpretMessage(transcript);
+        } catch (error) {
+          setLiveTranscript('');
+          setAssistantMode('idle');
+          setAssistantError(error instanceof Error ? error.message : 'Falha ao transcrever seu audio.');
+        }
+      };
+
+      recorder.start();
+    } catch (error) {
+      setAssistantMode('idle');
+      setIsRecording(false);
+      setLiveTranscript('');
+      setAssistantError(error instanceof Error ? error.message : 'Nao consegui iniciar a gravacao.');
+    }
+  };
+
+  const handleVoiceCapture = async (forceStart = false) => {
+    if (isRecording && !forceStart) {
+      stopVoiceCapture();
+      return;
+    }
+
+    await startRecordedAudioCapture();
+  };
+
+  const syncAssistantTurnRemotely = async (requestMessage: string, result: AssistantTurnResponse) => {
+    if (!session) {
+      return null;
+    }
+
+    try {
+      return await syncNorteAssistantTurn({
+        userId: session.user.id,
+        fullName: (session.user.user_metadata?.full_name as string | undefined) ?? session.user.email ?? '',
+        onboardingProfile: profile,
+        selectedPainPoints: selectedPain,
+        requestMessage,
+        response: result,
+      });
+    } catch (remoteError) {
+      setAssistantError(
+        remoteError instanceof Error
+          ? `A IA respondeu, mas nao consegui sincronizar a conversa no banco: ${remoteError.message}`
+          : 'A IA respondeu, mas nao consegui sincronizar a conversa no banco.',
+      );
+      return null;
+    }
+  };
+
+  const runStructuredAssistantTurn = async (
+    message: string,
+    options?: {
+      clearInput?: boolean;
+      playTts?: boolean;
+      appendFailureMessage?: boolean;
+      awaitRealtimeVoice?: boolean;
+    },
+  ) => {
+    const trimmed = message.trim();
+
+    if (!trimmed) {
+      return null;
+    }
+
+    const pendingDraft = drafts.find((draft) => !draft.context);
+    const contextReply = pendingQuestions === 1 ? inferContextReply(trimmed) : null;
+
+    if (pendingDraft && contextReply) {
+      handleDraftContext(pendingDraft.id, contextReply);
+      const reply = `Entendi. Classifiquei ${pendingDraft.title} como ${contextReply.toLowerCase()}. Revise o valor e confirme quando estiver tudo certo.`;
+      const response: AssistantTurnResponse = {
+        assistantMessage: reply,
+        speechText: reply,
+        drafts: [],
+      };
+
+      if (options?.clearInput) {
+        setAssistantInput('');
+      }
+
+      setMessages((current) => [...current, createMessage('user', trimmed), createMessage('assistant', reply)]);
+      setLastSpeechText(reply);
+
+      if (options?.playTts) {
+        setAssistantMode('responding');
+        void playAssistantSpeech(reply);
+      } else if (options?.awaitRealtimeVoice) {
+        setAssistantMode('responding');
+      }
+
+      return response;
+    }
+
+    setAssistantError(null);
+    const latestHealth = await refreshAssistantHealth();
+
+    if (latestHealth && !latestHealth.openaiConfigured) {
+      setAssistantMode('idle');
+      setAssistantError('A OpenAI ainda nao esta conectada no backend do Norte.');
+      return null;
+    }
+
+    setAssistantMode('thinking');
+    setIsAssistantLoading(true);
+
+    if (options?.clearInput) {
+      setAssistantInput('');
+    }
+
+    try {
+      const result = await askNorteAssistant({
+        message: trimmed,
+        history: messages,
+        movements,
+        drafts,
+        profile,
+        selectedPain,
+      });
+
+      let persistedMessages = [createMessage('user', trimmed), createMessage('assistant', result.assistantMessage)];
+      let persistedDrafts = result.drafts.map((draft) => ({
+        ...draft,
+        walletAccountId: pickAccountForContext(accountState, draft.context)?.id ?? null,
+      }));
+
+      const remoteTurn = await syncAssistantTurnRemotely(trimmed, result);
+      if (remoteTurn) {
+        persistedMessages = remoteTurn.persistedMessages;
+        if (remoteTurn.persistedDrafts.length > 0) {
+          persistedDrafts = remoteTurn.persistedDrafts.map((draft) => ({
+            ...draft,
+            walletAccountId: pickAccountForContext(accountState, draft.context)?.id ?? null,
+          }));
+        }
+      }
+
+      setMessages((current) => [...current, ...persistedMessages]);
+
+      if (persistedDrafts.length > 0) {
+        setDrafts((current) => [...persistedDrafts, ...current]);
+      }
+
+      setLastSpeechText(result.speechText);
+
+      if (options?.playTts && result.speechText) {
+        setAssistantMode('responding');
+        void playAssistantSpeech(result.speechText);
+      } else if (options?.awaitRealtimeVoice) {
+        setAssistantMode('responding');
+      } else {
+        setAssistantMode('idle');
+      }
+
+      return result;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Nao foi possivel falar com a IA real do Norte agora.';
+
+      if (options?.appendFailureMessage ?? true) {
+        setMessages((current) => [
+          ...current,
+          createMessage('user', trimmed),
+          createMessage(
+            'assistant',
+            `Nao consegui falar com o backend real do Norte. Verifique se o servidor esta rodando e se a OpenAI esta configurada. Detalhe: ${errorMessage}`,
+          ),
+        ]);
+      }
+
+      setAssistantError(errorMessage);
+      setAssistantMode('idle');
+      throw error;
+    } finally {
+      setIsAssistantLoading(false);
+    }
+  };
+
+  const buildRealtimeContextInstructions = () => {
+    const recentMovements = movements
+      .slice(0, 6)
+      .map((movement) => `${movement.type === 'income' ? 'Receita' : 'Despesa'} ${movement.title} ${movement.amount} ${movement.context}`)
+      .join(' | ');
+
+    const pendingDrafts = drafts
+      .slice(0, 6)
+      .map((draft) => `${draft.title} ${draft.amount} ${draft.context ?? 'sem contexto'} ${draft.question ?? ''}`.trim())
+      .join(' | ');
+
+    return [
+      `Contexto do usuario: perfil ${profile}.`,
+      `Principais dores: ${selectedPain.join(', ') || 'nenhuma informada'}.`,
+      `Movimentos recentes: ${recentMovements || 'nenhum movimento recente.'}`,
+      `Rascunhos pendentes: ${pendingDrafts || 'nenhum rascunho pendente.'}`,
+      'Em assuntos financeiros, use a ferramenta analyze_financial_message como fonte principal antes de responder.',
+    ].join('\n');
+  };
+
+  const handleRealtimeServerEvent = async (payload: string) => {
+    try {
+      const event = JSON.parse(payload) as Record<string, any>;
+
+      switch (event.type) {
+        case 'session.created':
+        case 'session.updated':
+          return;
+        case 'input_audio_buffer.speech_started':
+          setAssistantMode('listening');
+          setLiveTranscript('Estou ouvindo voce em tempo real...');
+          return;
+        case 'input_audio_buffer.speech_stopped':
+          setAssistantMode('thinking');
+          return;
+        case 'conversation.item.input_audio_transcription.delta':
+          pendingVoiceMessageRef.current = `${pendingVoiceMessageRef.current}${event.delta ?? ''}`;
+          setLiveTranscript(pendingVoiceMessageRef.current);
+          return;
+        case 'conversation.item.input_audio_transcription.completed': {
+          const transcript = String(event.transcript ?? '').trim();
+          pendingVoiceMessageRef.current = transcript;
+          pendingAssistantTranscriptRef.current = '';
+          voiceToolHandledRef.current = false;
+          setLiveTranscript(transcript);
+          setAssistantInput(transcript);
+          setAssistantMode('thinking');
+          return;
+        }
+        case 'conversation.item.input_audio_transcription.failed':
+          setAssistantMode('idle');
+          setAssistantError(event.error?.message ?? 'Nao consegui entender seu audio com clareza.');
+          return;
+        case 'response.created':
+          pendingAssistantTranscriptRef.current = '';
+          setAssistantMode('responding');
+          return;
+        case 'response.output_audio_transcript.delta':
+          pendingAssistantTranscriptRef.current = `${pendingAssistantTranscriptRef.current}${event.delta ?? ''}`;
+          if (!voiceToolHandledRef.current) {
+            setLiveTranscript(`Norte: ${pendingAssistantTranscriptRef.current}`);
+          }
+          return;
+        case 'response.output_audio_transcript.done': {
+          const spokenTranscript = String(event.transcript ?? pendingAssistantTranscriptRef.current ?? '').trim();
+          if (spokenTranscript) {
+            setLastSpeechText(spokenTranscript);
+          }
+
+          if (!voiceToolHandledRef.current) {
+            const userTurn = pendingVoiceMessageRef.current.trim();
+            if (userTurn && spokenTranscript) {
+              setMessages((current) => [...current, createMessage('user', userTurn), createMessage('assistant', spokenTranscript)]);
+            }
+          }
+
+          pendingVoiceMessageRef.current = '';
+          pendingAssistantTranscriptRef.current = '';
+          setAssistantMode(conversationModeRef.current ? 'listening' : 'idle');
+          setLiveTranscript(conversationModeRef.current ? 'Pode continuar falando. Eu sigo ouvindo.' : '');
+          return;
+        }
+        case 'response.function_call_arguments.done': {
+          if (event.name !== 'analyze_financial_message') {
+            return;
+          }
+
+          voiceToolHandledRef.current = true;
+          const parsedArguments = JSON.parse(String(event.arguments ?? '{}')) as { message?: string };
+          const financialMessage = (parsedArguments.message ?? pendingVoiceMessageRef.current ?? '').trim();
+
+          if (!financialMessage) {
+            sendRealtimeEvent({
+              type: 'conversation.item.create',
+              item: {
+                type: 'function_call_output',
+                call_id: event.call_id,
+                output: JSON.stringify({
+                  ok: false,
+                  error: 'Nao recebi uma frase valida do usuario para analisar.',
+                }),
+              },
+            });
+            sendRealtimeEvent({ type: 'response.create' });
+            return;
+          }
+
+          try {
+            const result = await runStructuredAssistantTurn(financialMessage, {
+              playTts: false,
+              appendFailureMessage: false,
+              awaitRealtimeVoice: true,
+            });
+
+            sendRealtimeEvent({
+              type: 'conversation.item.create',
+              item: {
+                type: 'function_call_output',
+                call_id: event.call_id,
+                output: JSON.stringify({
+                  ok: true,
+                  assistantMessage: result?.assistantMessage ?? '',
+                  speechText: result?.speechText ?? '',
+                  drafts: result?.drafts ?? [],
+                }),
+              },
+            });
+          } catch (toolError) {
+            sendRealtimeEvent({
+              type: 'conversation.item.create',
+              item: {
+                type: 'function_call_output',
+                call_id: event.call_id,
+                output: JSON.stringify({
+                  ok: false,
+                  error: toolError instanceof Error ? toolError.message : 'Falha ao analisar o movimento financeiro.',
+                }),
+              },
+            });
+          }
+
+          sendRealtimeEvent({ type: 'response.create' });
+          return;
+        }
+        case 'error':
+          setAssistantError(event.error?.message ?? 'Falha na conversa em tempo real da Norte.');
+          return;
+        default:
+          return;
+      }
+    } catch (error) {
+      setAssistantError(error instanceof Error ? error.message : 'Falha ao interpretar os eventos da conversa em tempo real.');
+    }
+  };
+
+  const startRealtimeConversation = async () => {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+      setAssistantError('O modo conversa ao vivo funciona no navegador.');
+      return;
+    }
+
+    const PeerConnection = (window as any).RTCPeerConnection;
+
+    if (!PeerConnection || !navigator.mediaDevices?.getUserMedia) {
+      setAssistantError('Seu navegador nao suporta conversa de voz em tempo real com a Norte.');
+      return;
+    }
+
+    try {
+      setAssistantError(null);
+      stopVoiceCapture();
+      stopAssistantPlayback();
+      stopRealtimeConversation();
+      setIsRecording(true);
+      setAssistantMode('listening');
+      setLiveTranscript('Conectando a Norte em tempo real...');
+
+      const peer = new PeerConnection();
+      realtimePeerRef.current = peer;
+
+      const remoteAudio = new Audio();
+      remoteAudio.autoplay = true;
+      realtimeAudioRef.current = remoteAudio;
+
+      peer.ontrack = (event: any) => {
+        remoteAudio.srcObject = event.streams[0];
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      });
+
+      realtimeStreamRef.current = stream;
+      stream.getTracks().forEach((track: any) => peer.addTrack(track, stream));
+
+      const channel = peer.createDataChannel('oai-events');
+      realtimeChannelRef.current = channel;
+      channel.onmessage = (event: any) => {
+        void handleRealtimeServerEvent(String(event.data ?? ''));
+      };
+      channel.onopen = () => {
+        sendRealtimeEvent({
+          type: 'session.update',
+          session: {
+            instructions: buildRealtimeContextInstructions(),
+          },
+        });
+        setLiveTranscript('Pode falar naturalmente. A Norte responde sozinha.');
+      };
+      channel.onclose = () => {
+        if (conversationModeRef.current) {
+          setAssistantMode('idle');
+        }
+      };
+
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      const answerSdp = await createNorteRealtimeSession(offer.sdp ?? '');
+      await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    } catch (error) {
+      stopRealtimeConversation();
+      setIsConversationMode(false);
+      setIsRecording(false);
+      setAssistantMode('idle');
+      setLiveTranscript('');
+      setAssistantError(
+        error instanceof Error
+          ? `Nao consegui abrir a conversa ao vivo da Norte: ${error.message}`
+          : 'Nao consegui abrir a conversa ao vivo da Norte.',
+      );
+    }
+  };
+
+  const toggleConversationMode = async () => {
+    if (isConversationMode) {
+      setIsConversationMode(false);
+      stopVoiceCapture();
+      stopAssistantPlayback();
+      stopRealtimeConversation();
+      setIsRecording(false);
+      setLiveTranscript('');
+      setAssistantMode('idle');
+      return;
+    }
+
+    setAssistantError(null);
+    setIsConversationMode(true);
+    await startRealtimeConversation();
+  };
+
+  const handleReplayLastSpeech = async () => {
+    if (!lastSpeechText) {
+      setAssistantError('Ainda nao existe uma resposta em voz para repetir.');
+      return;
+    }
+
+    setAssistantMode('responding');
+    await playAssistantSpeech(lastSpeechText);
+  };
+
+  const handleInterpretMessage = async (overrideMessage?: string) => {
+    const trimmed = (overrideMessage ?? assistantInput).trim();
+
+    if (!trimmed) {
+      return;
+    }
+
+    try {
+      await runStructuredAssistantTurn(trimmed, {
+        clearInput: !overrideMessage,
+        playTts: true,
+        appendFailureMessage: true,
+      });
+    } catch (error) {
+      setAssistantInput(trimmed);
+    }
+  };
+
+  const handleConfirmDrafts = async () => {
+    if (drafts.length === 0 || drafts.some((draft) => !draft.context) || accountState.length === 0) {
+      return;
+    }
+
+    const confirmedMovements = drafts.map((draft) => {
+      const baseMovement = buildMovementFromDraft(draft);
+      const account =
+        accountState.find((item) => item.id === draft.walletAccountId) ??
+        pickAccountForContext(accountState, draft.context) ??
+        accountState[0] ??
+        null;
+
+      return {
+        ...baseMovement,
+        account: account?.name ?? baseMovement.account,
+        walletAccountId: account?.id ?? draft.walletAccountId ?? null,
+        cardId: draft.cardId ?? null,
+      } satisfies Movement;
+    });
+    setMovements((current) => [...confirmedMovements, ...current]);
+    setAccountState((current) =>
+      confirmedMovements.reduce((updatedAccounts, movement) => applyMovementToAccounts(updatedAccounts, movement), current),
+    );
+    setDrafts([]);
+    setMessages((current) => [
+      ...current,
+      createMessage('assistant', 'Pronto. Salvei os lancamentos confirmados e atualizei seus saldos locais.'),
+    ]);
+    setAssistantMode('responding');
+    setTimeout(() => setAssistantMode('idle'), 1500);
+
+    if (session && supabase) {
+      try {
+        await persistConfirmedDrafts(session, drafts);
+      } catch (error) {
+        setMessages((current) => [
+          ...current,
+          createMessage(
+            'assistant',
+            `Os dados foram atualizados no app, mas houve falha ao sincronizar com a nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
+          ),
+        ]);
+      }
+    }
+  };
+
+  const handleSaveManualEntry = async () => {
+    const amount = parseCurrencyInput(manualEntry.amount);
+
+    if (!manualEntry.title.trim() || !amount || !manualEntryAccount) {
+      showNotice('Confira o lancamento', 'Informe uma descricao, um valor valido e escolha a conta que recebeu ou pagou esse movimento.');
+      return;
+    }
+
+    const movement: Movement = {
+      id: editingMovementId ?? `manual-${Date.now()}`,
+      title: manualEntry.title.trim(),
+      amount,
+      type: manualEntry.type,
+      context: manualEntry.context,
+      source: 'Manual',
+      createdAt: new Date().toISOString(),
+      account: manualEntryAccount.name,
+      walletAccountId: manualEntryAccount.id,
+      cardId: manualEntryCard?.id ?? null,
+    };
+
+    const previousMovement = editingMovementId ? movements.find((item) => item.id === editingMovementId) : null;
+
+    if (editingMovementId) {
+      setMovements((current) => current.map((item) => (item.id === editingMovementId ? movement : item)));
+      if (previousMovement) {
+        setAccountState((current) =>
+          applyMovementToAccounts(applyMovementToAccounts(current, previousMovement, -1), movement),
+        );
+      }
+    } else {
+      setMovements((current) => [movement, ...current]);
+      setAccountState((current) => applyMovementToAccounts(current, movement));
+    }
+
+    setManualEntry({
+      ...defaultManualEntry,
+      accountId: accountState[0]?.id ?? '',
+    });
+    setShowManualEntry(false);
+    setEditingMovementId(null);
+
+    if (session && supabase) {
+      try {
+        if (editingMovementId) {
+          await updateMovement(session, editingMovementId, {
+            title: movement.title,
+            amount: movement.amount,
+            type: movement.type,
+            context: movement.context,
+            source: movement.source,
+            occurredAt: movement.createdAt,
+            walletAccountId: movement.walletAccountId,
+            cardId: movement.cardId,
+          });
+        } else {
+          await createMovement(session, {
+            title: movement.title,
+            amount: movement.amount,
+            type: movement.type,
+            context: movement.context,
+            source: movement.source,
+            occurredAt: movement.createdAt,
+            walletAccountId: movement.walletAccountId,
+            cardId: movement.cardId,
+          });
+        }
+
+        await refreshWorkspaceFromCloud();
+      } catch (error) {
+        setMessages((current) => [
+          ...current,
+          createMessage(
+            'assistant',
+            `Seu lancamento manual entrou no app, mas ainda nao consegui sincronizar com a nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
+          ),
+        ]);
+      }
+    }
+  };
+
+  const handleEditMovement = (movement: Movement) => {
+    setEditingMovementId(movement.id);
+    setShowManualEntry(true);
+    setManualEntry({
+      title: movement.title,
+      amount: String(movement.amount),
+      type: movement.type,
+      context: movement.context,
+      accountId: movement.walletAccountId ?? accountState.find((account) => account.name === movement.account)?.id ?? accountState[0]?.id ?? '',
+      cardId: movement.cardId ?? '',
+    });
+    setActiveTab('moves');
+  };
+
+  const handleDeleteMovement = async (movementId: string) => {
+    const current = movements.find((item) => item.id === movementId);
+    if (!current) {
+      return;
+    }
+
+    setMovements((items) => items.filter((item) => item.id !== movementId));
+    setAccountState((items) => applyMovementToAccounts(items, current, -1));
+
+    if (session && supabase) {
+      try {
+        await deleteMovement(session, movementId);
+        await refreshWorkspaceFromCloud();
+      } catch (error) {
+        setMessages((items) => [
+          ...items,
+          createMessage(
+            'assistant',
+            `Nao consegui excluir esse movimento da nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
+          ),
+        ]);
+      }
+    }
+  };
+
+  const requestDeleteMovement = (movementId: string) => {
+    confirmDestructiveAction(
+      'Excluir movimento?',
+      'Esse movimento sera removido do historico e o saldo da conta sera recalculado.',
+      () => handleDeleteMovement(movementId),
+    );
+  };
+
+  const handleSaveAccount = async () => {
+    if (!accountForm.name.trim()) {
+      showNotice('Falta o nome da conta', 'Diga como voce quer identificar esta conta, por exemplo: Conta digital ou Caixa do negocio.');
+      return;
+    }
+
+    const localAccount: Account = {
+      id: editingAccountId ?? `account-${Date.now()}`,
+      name: accountForm.name.trim(),
+      detail: accountForm.detail.trim() || (accountForm.isBusiness ? 'Conta do negocio' : 'Conta pessoal'),
+      kind: accountForm.kind,
+      isBusiness: accountForm.isBusiness,
+      balance: editingAccountId
+        ? accountState.find((item) => item.id === editingAccountId)?.balance ?? 0
+        : 0,
+    };
+
+    setAccountState((current) =>
+      editingAccountId ? current.map((item) => (item.id === editingAccountId ? localAccount : item)) : [...current, localAccount],
+    );
+
+    setShowAccountForm(false);
+    setEditingAccountId(null);
+    setAccountForm(defaultAccountForm);
+
+    if (session && supabase) {
+      try {
+        if (editingAccountId) {
+          await updateWalletAccount(session, editingAccountId, localAccount);
+        } else {
+          await createWalletAccount(session, localAccount);
+        }
+
+        await refreshWorkspaceFromCloud();
+      } catch (error) {
+        setMessages((items) => [
+          ...items,
+          createMessage(
+            'assistant',
+            `Nao consegui salvar a conta na nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
+          ),
+        ]);
+      }
+    }
+  };
+
+  const handleEditAccount = (account: Account) => {
+    setEditingAccountId(account.id);
+    setShowAccountForm(true);
+    setAccountForm({
+      name: account.name,
+      detail: account.detail,
+      kind: account.kind,
+      isBusiness: account.isBusiness,
+    });
+    setActiveTab('wallet');
+  };
+
+  const handleDeleteAccount = async (accountId: string) => {
+    setAccountState((current) => current.filter((item) => item.id !== accountId));
+    setCardState((current) => current.map((item) => (item.walletAccountId === accountId ? { ...item, walletAccountId: null } : item)));
+
+    if (session && supabase) {
+      try {
+        await deleteWalletAccount(session, accountId);
+        await refreshWorkspaceFromCloud();
+      } catch (error) {
+        setMessages((items) => [
+          ...items,
+          createMessage(
+            'assistant',
+            `Nao consegui excluir a conta da nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
+          ),
+        ]);
+      }
+    }
+  };
+
+  const requestDeleteAccount = (accountId: string) => {
+    confirmDestructiveAction(
+      'Excluir conta?',
+      'Cartoes vinculados perderao a conta associada. Os movimentos historicos serao mantidos.',
+      () => handleDeleteAccount(accountId),
+    );
+  };
+
+  const handleSaveCard = async () => {
+    const limit = parseCurrencyInput(cardForm.limit);
+    const used = parseCurrencyInput(cardForm.used);
+
+    if (
+      !cardForm.name.trim() ||
+      !Number.isFinite(limit) ||
+      limit <= 0 ||
+      !Number.isFinite(used) ||
+      used < 0 ||
+      used > limit
+    ) {
+      showNotice('Confira os dados do cartao', 'Informe um nome, um limite maior que zero e um valor utilizado entre zero e o limite.');
+      return;
+    }
+
+    const localCard: WalletCard = {
+      id: editingCardId ?? `card-${Date.now()}`,
+      name: cardForm.name.trim(),
+      limit,
+      used,
+      walletAccountId: cardForm.walletAccountId || null,
+    };
+
+    setCardState((current) =>
+      editingCardId ? current.map((item) => (item.id === editingCardId ? localCard : item)) : [...current, localCard],
+    );
+
+    setShowCardForm(false);
+    setEditingCardId(null);
+    setCardForm(defaultCardForm);
+
+    if (session && supabase) {
+      try {
+        if (editingCardId) {
+          await updateWalletCard(session, editingCardId, localCard);
+        } else {
+          await createWalletCard(session, localCard);
+        }
+
+        await refreshWorkspaceFromCloud();
+      } catch (error) {
+        setMessages((items) => [
+          ...items,
+          createMessage(
+            'assistant',
+            `Nao consegui salvar o cartao na nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
+          ),
+        ]);
+      }
+    }
+  };
+
+  const handleEditCard = (card: WalletCard) => {
+    setEditingCardId(card.id);
+    setShowCardForm(true);
+    setCardForm({
+      name: card.name,
+      limit: String(card.limit),
+      used: String(card.used),
+      walletAccountId: card.walletAccountId ?? '',
+    });
+    setActiveTab('wallet');
+  };
+
+  const handleDeleteCard = async (cardId: string) => {
+    setCardState((current) => current.filter((item) => item.id !== cardId));
+
+    if (session && supabase) {
+      try {
+        await deleteWalletCard(session, cardId);
+        await refreshWorkspaceFromCloud();
+      } catch (error) {
+        setMessages((items) => [
+          ...items,
+          createMessage(
+            'assistant',
+            `Nao consegui excluir o cartao da nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
+          ),
+        ]);
+      }
+    }
+  };
+
+  const requestDeleteCard = (cardId: string) => {
+    confirmDestructiveAction('Excluir cartao?', 'O cartao sera removido da sua carteira.', () => handleDeleteCard(cardId));
+  };
+
+  const handleSaveGoal = async () => {
+    const target = parseCurrencyInput(goalForm.target);
+    const current = parseCurrencyInput(goalForm.current);
+
+    if (!goalForm.title.trim() || !Number.isFinite(target) || target <= 0 || !Number.isFinite(current) || current < 0) {
+      showNotice('Confira os dados da meta', 'Informe um nome, um objetivo maior que zero e quanto voce ja guardou.');
+      return;
+    }
+
+    const localGoal: Goal = {
+      id: `goal-${Date.now()}`,
+      title: goalForm.title.trim(),
+      current: Math.min(current, target),
+      target,
+    };
+
+    setGoalState((items) => [...items, localGoal]);
+    setGoalForm(defaultGoalForm);
+    setShowGoalForm(false);
+
+    if (session && supabase) {
+      try {
+        await createGoal(session, localGoal);
+        await refreshWorkspaceFromCloud();
+      } catch (error) {
+        setMessages((items) => [
+          ...items,
+          createMessage('assistant', `A meta foi criada localmente, mas nao sincronizou com a nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`),
+        ]);
+      }
+    }
+  };
+
+  const handleDeleteGoal = (goalId: string) => {
+    confirmDestructiveAction('Excluir meta?', 'O progresso desta meta sera removido do seu planejamento.', async () => {
+      setGoalState((items) => items.filter((goal) => goal.id !== goalId));
+
+      if (session && supabase) {
+        try {
+          await deleteGoal(session, goalId);
+          await refreshWorkspaceFromCloud();
+        } catch (error) {
+          setMessages((items) => [
+            ...items,
+            createMessage('assistant', `A meta saiu deste aparelho, mas nao consegui atualizar a nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`),
+          ]);
+        }
+      }
+    });
+  };
+
+  const handleSaveBill = async () => {
+    const amount = parseCurrencyInput(billForm.amount);
+
+    if (
+      !billForm.title.trim() ||
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(billForm.due.trim())
+    ) {
+      showNotice('Confira os dados da conta', 'Informe uma descricao, um valor maior que zero e a data no formato AAAA-MM-DD.');
+      return;
+    }
+
+    const localBill: UpcomingBill = {
+      id: `bill-${Date.now()}`,
+      title: billForm.title.trim(),
+      amount,
+      due: billForm.due.trim(),
+    };
+
+    setBillState((items) => [...items, localBill]);
+    setBillForm(defaultBillForm);
+    setShowBillForm(false);
+
+    if (session && supabase) {
+      try {
+        await createScheduledBill(session, localBill);
+        await refreshWorkspaceFromCloud();
+      } catch (error) {
+        setMessages((items) => [
+          ...items,
+          createMessage('assistant', `A conta foi criada localmente, mas nao sincronizou com a nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`),
+        ]);
+      }
+    }
+  };
+
+  const handleDeleteBill = (billId: string) => {
+    confirmDestructiveAction('Excluir conta futura?', 'Ela deixara de entrar no calculo do seu valor disponivel.', async () => {
+      setBillState((items) => items.filter((bill) => bill.id !== billId));
+
+      if (session && supabase) {
+        try {
+          await deleteScheduledBill(session, billId);
+          await refreshWorkspaceFromCloud();
+        } catch (error) {
+          setMessages((items) => [
+            ...items,
+            createMessage('assistant', `A conta saiu deste aparelho, mas nao consegui atualizar a nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`),
+          ]);
+        }
+      }
+    });
+  };
+
+  const handleResetLocalData = () => {
+    setStep('welcome');
+    setOnboardingIndex(0);
+    setProfile('freelancer');
+    setSelectedPain(['Misturo pessoal com negocio', 'Nao sei quanto posso gastar']);
+    setThemeMode('light');
+    setAssistantMode('idle');
+    setActiveTab('assistant');
+    setFocusPanel('business');
+    setMessages(initialMessages);
+    setDrafts(initialDrafts);
+    setMovements(initialMovements);
+    setAccountState(initialAccounts);
+    setCardState(initialCards);
+    setGoalState(goals);
+    setBillState(upcomingBills);
+    setAssistantInput(initialAssistantInput);
+    setShowManualEntry(false);
+    setManualEntry({ ...defaultManualEntry, accountId: initialAccounts[0]?.id ?? '' });
+    setEditingMovementId(null);
+    setShowAccountForm(false);
+    setAccountForm(defaultAccountForm);
+    setEditingAccountId(null);
+    setShowCardForm(false);
+    setCardForm(defaultCardForm);
+    setEditingCardId(null);
+    setShowGoalForm(false);
+    setGoalForm(defaultGoalForm);
+    setShowBillForm(false);
+    setBillForm(defaultBillForm);
+    setMovementTypeFilter('all');
+    setMovementContextFilter('all');
+  };
+
+  const sortedGoals = useMemo(
+    () =>
+      goalState.map((goal) => ({
+        ...goal,
+        progress: Math.min(goal.current / goal.target, 1),
+      })),
+    [goalState],
+  );
+  const decoratedGoals = useMemo(
+    () =>
+      sortedGoals.map((goal, index) => ({
+        ...goal,
+        accent: goalAccentPalette[index % goalAccentPalette.length],
+      })),
+    [sortedGoals],
+  );
+  const currentTheme = appThemes[themeMode];
+  palette = currentTheme;
+  activeThemeMode = themeMode;
+  styles = getStyles(themeMode);
+
+  if (isHydrating) {
+    return (
+      <Shell theme={currentTheme}>
+        <SafeAreaView style={styles.safeArea}>
+          <View style={styles.loadingWrap}>
+            <NorteOrb size={140} mode="thinking" theme={currentTheme} />
+            <Text style={styles.sectionTitle}>Carregando seu Norte</Text>
+            <Text style={styles.bodyText}>Recuperando seus dados locais e preparando a experiencia.</Text>
+          </View>
+        </SafeAreaView>
+      </Shell>
+    );
+  }
+
+  if (isAuthLoading) {
+    return (
+      <Shell theme={currentTheme}>
+        <SafeAreaView style={styles.safeArea}>
+          <View style={styles.loadingWrap}>
+            <NorteOrb size={140} mode="thinking" theme={currentTheme} />
+            <Text style={styles.sectionTitle}>Conectando sua conta</Text>
+            <Text style={styles.bodyText}>Validando autenticacao e preparando seu espaco do Norte.</Text>
+          </View>
+        </SafeAreaView>
+      </Shell>
+    );
+  }
+
+  if (isSupabaseConfigured() && !session) {
+    return (
+      <Shell theme={currentTheme}>
+        <SafeAreaView style={styles.safeArea}>
+          <View style={styles.authWrap}>
+            <AuthScreen error={authError} isLoading={isAuthLoading} onSubmit={handleAuthSubmit} theme={currentTheme} />
+          </View>
+        </SafeAreaView>
+      </Shell>
+    );
+  }
+
+  if (step === 'welcome') {
+    return (
+      <Shell theme={currentTheme}>
+        <SafeAreaView style={styles.safeArea}>
+          <View style={styles.welcomeWrap}>
+            <View style={styles.logoLockup}>
+              <NorteOrb size={132} mode="idle" theme={currentTheme} />
+              <Text style={styles.brand}>Norte</Text>
+              <Text style={styles.subtitle}>
+                O assistente financeiro que organiza sua vida pessoal e seu negocio conversando com voce.
+              </Text>
+            </View>
+
+            <View style={styles.featureStack}>
+              <FeatureRow
+                icon="chatbubble-ellipses-outline"
+                title="Converse em vez de preencher planilhas"
+                description="Voce fala naturalmente, o app interpreta e monta rascunhos antes de salvar."
+              />
+              <FeatureRow
+                icon="git-compare-outline"
+                title="Separe pessoal e negocio com clareza"
+                description="O Norte identifica ambiguidades, pergunta o que falta e mostra o impacto no caixa."
+              />
+              <FeatureRow
+                icon="sparkles-outline"
+                title="Base local e funcional"
+                description="Lancamentos manuais, confirmacao pela IA e persistencia no aparelho desde o MVP."
+              />
+            </View>
+
+            <Pressable style={styles.primaryButton} onPress={() => setStep('onboarding')}>
+              <Text style={styles.primaryButtonText}>Comecar experiencia</Text>
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </Shell>
+    );
+  }
+
+  if (step === 'onboarding') {
+    return (
+      <Shell theme={currentTheme}>
+        <SafeAreaView style={styles.safeArea}>
+          <View style={styles.onboardingHeader}>
+            <Text style={styles.kicker}>Onboarding</Text>
+            <Text style={styles.sectionTitle}>Vamos adaptar o Norte ao seu momento</Text>
+            <Text style={styles.bodyText}>
+              Tudo que voce confirmar aqui fica salvo localmente para continuar de onde parou.
+            </Text>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            {onboardingIndex === 0 && (
+              <View style={styles.stack}>
+                {onboardingProfiles.map((item) => (
+                  <SelectableCard
+                    key={item.id}
+                    selected={profile === item.id}
+                    title={item.title}
+                    description={item.description}
+                    onPress={() => setProfile(item.id)}
+                  />
+                ))}
+              </View>
+            )}
+
+            {onboardingIndex === 1 && (
+              <View style={styles.stack}>
+                <Text style={styles.sectionTitle}>O que mais te atrapalha hoje?</Text>
+                <View style={styles.pillRow}>
+                  {painPoints.map((item) => (
+                    <Pill
+                      key={item}
+                      label={item}
+                      selected={selectedPain.includes(item)}
+                      onPress={() => handlePainToggle(item)}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {onboardingIndex === 2 && (
+              <View style={styles.stack}>
+                <Card>
+                  <Text style={styles.cardTitle}>Como o Norte comeca neste MVP</Text>
+                  <Text style={styles.bodyText}>
+                    Home clara com o que importa, lancamentos manuais quando quiser e a Norte IA como principal forma de registrar o dia financeiro.
+                  </Text>
+                  <View style={styles.metricRow}>
+                    <MiniMetric
+                      label="Perfil"
+                      value={profile === 'personal' ? 'Pessoal' : profile === 'freelancer' ? 'Autonomo' : 'MEI'}
+                    />
+                    <MiniMetric label="Foco" value="Separar e simplificar" />
+                  </View>
+                </Card>
+              </View>
+            )}
+          </ScrollView>
+
+          <View style={styles.footerActions}>
+            {onboardingIndex > 0 ? (
+              <Pressable style={styles.secondaryButton} onPress={() => setOnboardingIndex((value) => value - 1)}>
+                <Text style={styles.secondaryButtonText}>Voltar</Text>
+              </Pressable>
+            ) : (
+              <View />
+            )}
+
+            <Pressable
+              style={styles.primaryButton}
+              onPress={() => {
+                if (onboardingIndex < 2) {
+                  setOnboardingIndex((value) => value + 1);
+                  return;
+                }
+
+                setStep('app');
+              }}
+            >
+              <Text style={styles.primaryButtonText}>{onboardingIndex < 2 ? 'Continuar' : 'Entrar no Norte'}</Text>
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell theme={currentTheme}>
+      <StatusBar barStyle={themeMode === 'dark' ? 'light-content' : 'dark-content'} />
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.appHeader}>
+          <View style={styles.headerLeading}>
+            <Pressable style={styles.headerMenuButton} onPress={() => setIsDrawerOpen(true)}>
+              <Ionicons name="menu-outline" size={22} color={palette.text} />
+            </Pressable>
+            <View>
+              <Text style={styles.kicker}>Norte</Text>
+              <Text style={styles.appTitle}>Ola, {userFirstName}</Text>
+              <Text style={styles.headerMeta}>Seu dinheiro com mais clareza</Text>
+            </View>
+          </View>
+          <View style={styles.headerActions}>
+            <View style={styles.headerBadge}>
+              <Text style={styles.headerBadgeText}>{isRemoteSyncing ? 'Sincronizando' : 'Nuvem ativa'}</Text>
+            </View>
+            <Pressable style={styles.avatarButton} onPress={() => setIsProfileOpen((value) => !value)}>
+              <LinearGradient colors={palette.avatarGradient} style={styles.avatarGradient}>
+                <Text style={styles.avatarText}>{userInitials || 'N'}</Text>
+              </LinearGradient>
+            </Pressable>
+          </View>
+        </View>
+
+        {isProfileOpen ? (
+          <View style={styles.profilePopover}>
+            <View style={styles.profileIdentity}>
+              <LinearGradient colors={palette.avatarGradient} style={styles.profileAvatarLarge}>
+                <Text style={styles.profileAvatarText}>{userInitials || 'N'}</Text>
+              </LinearGradient>
+              <View style={styles.flexOne}>
+                <Text style={styles.cardTitle}>{userDisplayName}</Text>
+                <Text style={styles.mutedText}>{session?.user?.email ?? 'Conta local'}</Text>
+              </View>
+            </View>
+            <Pressable style={styles.profileAction} onPress={() => handleDrawerNavigate('settings')}>
+              <Ionicons name="settings-outline" size={18} color={palette.text} />
+              <Text style={styles.profileActionText}>Abrir configuracoes</Text>
+            </Pressable>
+            <Pressable style={styles.profileAction} onPress={() => void handleSignOut()}>
+              <Ionicons name="log-out-outline" size={18} color={palette.text} />
+              <Text style={styles.profileActionText}>Sair da conta</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {activeTab === 'home' && (
+            <View style={styles.stack}>
+              <BalanceSpotlightCard
+                totalBalance={currency.format(totalBalance)}
+                personalBalance={currency.format(personalBalance)}
+                businessBalance={currency.format(businessBalance)}
+                spendableToday={currency.format(spendableToday)}
+                onOpenWallet={() => setActiveTab('wallet')}
+                onOpenMoves={() => setActiveTab('moves')}
+                onOpenPlan={() => setActiveTab('plan')}
+                onOpenAssistant={() => setActiveTab('assistant')}
+              />
+
+              <GuidanceCard
+                eyebrow={northGuidance.eyebrow}
+                title={northGuidance.title}
+                description={northGuidance.description}
+                icon={northGuidance.icon}
+                onPress={() => setActiveTab(pendingQuestions > 0 ? 'assistant' : 'moves')}
+              />
+
+              <Card variant="soft">
+                <View style={styles.rowBetween}>
+                  <Text style={styles.cardTitle}>Suas metas</Text>
+                  <Pressable onPress={() => setActiveTab('plan')}>
+                    <Text style={styles.inlineLink}>Ver tudo</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.detailStack}>
+                  {decoratedGoals.map((goal) => (
+                    <GoalListItem
+                      key={goal.id}
+                      title={goal.title}
+                      current={goal.current}
+                      target={goal.target}
+                      progress={goal.progress}
+                      accent={goal.accent}
+                    />
+                  ))}
+                </View>
+              </Card>
+
+              <Card variant="soft">
+                <View style={styles.rowBetween}>
+                  <Text style={styles.cardTitle}>Visoes essenciais</Text>
+                  <Pressable onPress={() => setActiveTab('assistant')}>
+                    <Text style={styles.inlineLink}>Abrir Norte IA</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.pillRow}>
+                  <Pill label="Negocio" selected={focusPanel === 'business'} onPress={() => setFocusPanel('business')} />
+                  <Pill label="Analises" selected={focusPanel === 'analysis'} onPress={() => setFocusPanel('analysis')} />
+                  <Pill
+                    label="Configuracoes"
+                    selected={focusPanel === 'settings'}
+                    onPress={() => setFocusPanel('settings')}
+                  />
+                </View>
+                {focusPanel === 'business' && (
+                  <View style={styles.detailStack}>
+                    {businessHighlights.map((item) => (
+                      <InsightRow key={item} text={item} />
+                    ))}
+                  </View>
+                )}
+                {focusPanel === 'analysis' && (
+                  <View style={styles.detailStack}>
+                    <View style={styles.grid}>
+                      {analysisMetrics.map((metric) => (
+                        <MetricCard key={metric.label} label={metric.label} value={metric.value} detail={metric.detail} />
+                      ))}
+                    </View>
+                    {analysisHighlights.map((item) => (
+                      <InsightRow key={item} text={item} />
+                    ))}
+                    <Pressable style={styles.secondaryButton} onPress={() => setActiveTab('assistant')}>
+                      <Text style={styles.secondaryButtonText}>Perguntar ao Norte sobre esta analise</Text>
+                    </Pressable>
+                  </View>
+                )}
+                {focusPanel === 'settings' && (
+                  <View style={styles.detailStack}>
+                    <View style={styles.themePanel}>
+                      <Text style={styles.cardTitle}>Aparencia</Text>
+                      <View style={styles.themeOptions}>
+                        <Pressable
+                          style={[styles.themeOption, themeMode === 'light' && styles.themeOptionActive]}
+                          onPress={() => setThemeMode('light')}
+                        >
+                          <Ionicons name="sunny-outline" size={18} color={themeMode === 'light' ? palette.text : palette.textMuted} />
+                          <Text style={[styles.themeOptionText, themeMode === 'light' && styles.themeOptionTextActive]}>Claro</Text>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.themeOption, themeMode === 'dark' && styles.themeOptionActive]}
+                          onPress={() => setThemeMode('dark')}
+                        >
+                          <Ionicons name="moon-outline" size={18} color={themeMode === 'dark' ? palette.text : palette.textMuted} />
+                          <Text style={[styles.themeOptionText, themeMode === 'dark' && styles.themeOptionTextActive]}>Dark</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                    <InsightRow text="Todos os seus dados deste MVP ficam persistidos localmente no aparelho." />
+                    <InsightRow text="Nada e salvo automaticamente sem sua confirmacao na area da IA." />
+                    <Pressable style={styles.secondaryButton} onPress={handleResetLocalData}>
+                      <Text style={styles.secondaryButtonText}>Resetar dados locais</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </Card>
+            </View>
+          )}
+
+          {activeTab === 'assistant' && (
+            <View style={styles.stack}>
+              <Card>
+                <Text style={styles.cardEyebrow}>Norte IA</Text>
+                <Text style={styles.sectionTitle}>Converse, revise e confirme</Text>
+                <Text style={styles.bodyText}>
+                  Aqui nao e bot travado. O app conversa com uma IA real via backend proprio, interpreta sua frase, gera rascunhos e so salva depois da sua validacao.
+                </Text>
+                <Text style={styles.backendHint}>Backend: {getNorteApiBaseUrl()}</Text>
+                <Text style={styles.backendHint}>
+                  OpenAI: {assistantHealth?.openaiConfigured ? 'conectada' : 'aguardando validacao'} {assistantHealth?.model ? `| Modelo: ${assistantHealth.model}` : ''}
+                </Text>
+
+                <View style={styles.orbStage}>
+                  <NorteOrb size={290} mode={assistantMode} theme={currentTheme} />
+                  <Text style={styles.orbLabel}>
+                    {assistantMode === 'listening' && (liveTranscript ? `Ouvindo: ${liveTranscript}` : 'Ouvindo seu dia')}
+                    {assistantMode === 'thinking' && 'Interpretando movimentos'}
+                    {assistantMode === 'responding' && 'Respondendo com contexto'}
+                    {assistantMode === 'idle' && (isConversationMode ? 'Modo conversa ativo' : 'Pronta para te organizar')}
+                  </Text>
+                </View>
+
+                <View style={styles.modeRow}>
+                  <ModeButton
+                    label={isConversationMode ? 'Encerrar conversa' : 'Modo conversa'}
+                    active={isConversationMode}
+                    onPress={() => void toggleConversationMode()}
+                  />
+                  <ModeButton label={isRecording ? 'Parar audio' : 'Falar agora'} active={isRecording} onPress={() => void handleVoiceCapture()} />
+                  <ModeButton label="Enviar" active={assistantMode === 'thinking'} onPress={() => void handleInterpretMessage()} />
+                  <ModeButton
+                    label={isSpeaking ? 'Tocando voz' : 'Ouvir resposta'}
+                    active={isSpeaking || assistantMode === 'responding'}
+                    onPress={() => void handleReplayLastSpeech()}
+                  />
+                </View>
+
+                <View style={styles.quickPromptRow}>
+                  {assistantPromptSuggestions.map((prompt) => (
+                    <Pressable key={prompt} style={styles.quickPrompt} onPress={() => setAssistantInput(prompt)}>
+                      <Ionicons name="sparkles-outline" size={14} color={palette.textMuted} />
+                      <Text style={styles.quickPromptText}>{prompt}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                <View style={styles.inputCard}>
+                  <TextInput
+                    value={assistantInput}
+                    onChangeText={setAssistantInput}
+                    multiline
+                    placeholder="Ex.: gastei 40 na padaria e recebi 300 do cliente Joao"
+                    placeholderTextColor={palette.textMuted}
+                    style={styles.input}
+                  />
+                  {assistantError ? (
+                    <View style={[styles.statusCard, styles.statusCardError]}>
+                      <Text style={[styles.statusText, styles.statusTextError]}>{assistantError}</Text>
+                    </View>
+                  ) : null}
+                  {liveTranscript && assistantMode === 'listening' ? (
+                    <View style={[styles.statusCard, styles.statusCardInfo]}>
+                      <Text style={styles.statusText}>Transcricao ao vivo: {liveTranscript}</Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.rowBetween}>
+                    <Pressable style={[styles.iconButton, isRecording && styles.iconButtonActive]} onPress={() => void handleVoiceCapture()}>
+                      <Ionicons name={isRecording ? 'stop-outline' : 'mic-outline'} size={18} color={palette.text} />
+                    </Pressable>
+                    <Pressable
+                      style={[styles.primaryButtonCompact, isAssistantLoading && styles.primaryButtonDisabled]}
+                      onPress={() => void handleInterpretMessage()}
+                      disabled={isAssistantLoading}
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        {isAssistantLoading ? 'Chamando IA real...' : 'Enviar para a IA'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                  <Text style={styles.mutedText}>
+                    No modo conversa, a Norte escuta, transcreve o que voce fala na hora e responde em voz automaticamente.
+                  </Text>
+                </View>
+              </Card>
+
+              <Card>
+                <View style={styles.rowBetween}>
+                  <Text style={styles.cardTitle}>Rascunhos antes de salvar</Text>
+                  <Text style={styles.mutedText}>{pendingQuestions} duvidas pendentes</Text>
+                </View>
+
+                {drafts.length > 0 ? (
+                  <View style={[styles.statusCard, pendingQuestions > 0 ? styles.statusCardInfo : styles.statusCardSuccess]}>
+                    <Text style={styles.statusText}>
+                      {pendingQuestions > 0
+                        ? `Escolha o contexto de ${pendingQuestions} item${pendingQuestions > 1 ? 'ns' : ''} para liberar a confirmacao.`
+                        : 'Tudo revisado. Confira os valores e confirme para atualizar seus saldos.'}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {drafts.length === 0 ? (
+                  <Text style={styles.bodyText}>Nenhum rascunho pendente. Envie uma frase para a IA organizar.</Text>
+                ) : (
+                  drafts.map((draft) => (
+                    <DraftCard
+                      key={draft.id}
+                      draft={draft}
+                      accounts={accountState}
+                      onSelectContext={(context) => handleDraftContext(draft.id, context)}
+                      onSelectAccount={(walletAccountId) => handleDraftAccount(draft.id, walletAccountId)}
+                      onRemove={() => handleRemoveDraft(draft.id)}
+                    />
+                  ))
+                )}
+
+                <Pressable
+                  style={[
+                    styles.primaryButton,
+                    (drafts.some((draft) => !draft.context) || accountState.length === 0) && styles.primaryButtonDisabled,
+                  ]}
+                  onPress={() => void handleConfirmDrafts()}
+                  disabled={drafts.length === 0 || drafts.some((draft) => !draft.context) || accountState.length === 0}
+                >
+                  <Text style={styles.primaryButtonText}>Confirmar e salvar lancamentos</Text>
+                </Pressable>
+              </Card>
+
+              <Card>
+                <Text style={styles.cardTitle}>Conversa recente</Text>
+                <View style={styles.detailStack}>
+                  {messages.slice(-5).map((message) => (
+                    <MessageBubble key={message.id} role={message.role} text={message.text} />
+                  ))}
+                </View>
+              </Card>
+            </View>
+          )}
+
+          {activeTab === 'moves' && (
+            <View style={styles.stack}>
+              <Card>
+                <View style={styles.rowBetween}>
+                  <Text style={styles.cardTitle}>{editingMovementId ? 'Editar movimento' : 'Lancamento manual'}</Text>
+                  <Pressable
+                    onPress={() => {
+                      setShowManualEntry((value) => !value);
+                      if (showManualEntry) {
+                        setEditingMovementId(null);
+                        setManualEntry({ ...defaultManualEntry, accountId: accountState[0]?.id ?? '' });
+                      }
+                    }}
+                  >
+                    <Text style={styles.inlineLink}>{showManualEntry ? 'Fechar' : 'Novo lancamento'}</Text>
+                  </Pressable>
+                </View>
+
+                {showManualEntry && (
+                  <View style={styles.manualForm}>
+                    <TextInput
+                      value={manualEntry.title}
+                      onChangeText={(value) => setManualEntry((current) => ({ ...current, title: value }))}
+                      placeholder="Descricao"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <TextInput
+                      value={manualEntry.amount}
+                      onChangeText={(value) => setManualEntry((current) => ({ ...current, amount: value }))}
+                      placeholder="Valor"
+                      keyboardType="decimal-pad"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <View style={styles.pillRow}>
+                      <Pill
+                        label="Despesa"
+                        selected={manualEntry.type === 'expense'}
+                        onPress={() => setManualEntry((current) => ({ ...current, type: 'expense' }))}
+                      />
+                      <Pill
+                        label="Receita"
+                        selected={manualEntry.type === 'income'}
+                        onPress={() => setManualEntry((current) => ({ ...current, type: 'income' }))}
+                      />
+                      <Pill
+                        label={manualEntry.context}
+                        selected
+                        onPress={() =>
+                          setManualEntry((current) => ({
+                            ...current,
+                            context:
+                              current.context === 'Pessoal'
+                                ? 'Negocio'
+                                : current.context === 'Negocio'
+                                  ? 'Compartilhado'
+                                  : 'Pessoal',
+                          }))
+                        }
+                      />
+                    </View>
+                    <View style={styles.selectionBlock}>
+                      <Text style={styles.mutedText}>Conta</Text>
+                      <View style={styles.pillRow}>
+                        {accountState.map((account) => (
+                          <Pill
+                            key={account.id}
+                            label={account.name}
+                            selected={manualEntry.accountId === account.id}
+                            onPress={() => setManualEntry((current) => ({ ...current, accountId: account.id }))}
+                          />
+                        ))}
+                      </View>
+                    </View>
+                    {cardState.length > 0 ? (
+                      <View style={styles.selectionBlock}>
+                        <Text style={styles.mutedText}>Cartao opcional</Text>
+                        <View style={styles.pillRow}>
+                          <Pill
+                            label="Sem cartao"
+                            selected={!manualEntry.cardId}
+                            onPress={() => setManualEntry((current) => ({ ...current, cardId: '' }))}
+                          />
+                          {cardState.map((card) => (
+                            <Pill
+                              key={card.id}
+                              label={card.name}
+                              selected={manualEntry.cardId === card.id}
+                              onPress={() => setManualEntry((current) => ({ ...current, cardId: card.id }))}
+                            />
+                          ))}
+                        </View>
+                      </View>
+                    ) : null}
+                    <Pressable style={styles.primaryButtonCompact} onPress={() => void handleSaveManualEntry()}>
+                      <Text style={styles.primaryButtonText}>{editingMovementId ? 'Atualizar movimento' : 'Salvar lancamento'}</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </Card>
+
+              <Card>
+                <View style={styles.rowBetween}>
+                  <View>
+                    <Text style={styles.cardTitle}>Historico de movimentos</Text>
+                    <Text style={styles.mutedText}>
+                      {visibleMovements.length} itens · {currency.format(visibleMovementTotal)} no filtro atual
+                    </Text>
+                  </View>
+                  <Ionicons name="filter-outline" size={18} color={palette.textMuted} />
+                </View>
+                <View style={styles.pillRow}>
+                  <Pill label="Todos" selected={movementTypeFilter === 'all'} onPress={() => setMovementTypeFilter('all')} />
+                  <Pill label="Receitas" selected={movementTypeFilter === 'income'} onPress={() => setMovementTypeFilter('income')} />
+                  <Pill label="Despesas" selected={movementTypeFilter === 'expense'} onPress={() => setMovementTypeFilter('expense')} />
+                </View>
+                <View style={styles.pillRow}>
+                  <Pill label="Tudo" selected={movementContextFilter === 'all'} onPress={() => setMovementContextFilter('all')} />
+                  <Pill label="Pessoal" selected={movementContextFilter === 'Pessoal'} onPress={() => setMovementContextFilter('Pessoal')} />
+                  <Pill label="Negocio" selected={movementContextFilter === 'Negocio'} onPress={() => setMovementContextFilter('Negocio')} />
+                  <Pill label="Compartilhado" selected={movementContextFilter === 'Compartilhado'} onPress={() => setMovementContextFilter('Compartilhado')} />
+                </View>
+                <View style={styles.detailStack}>
+                  {visibleMovements.length > 0 ? (
+                    visibleMovements.map((movement) => (
+                      <MovementRow
+                        key={movement.id}
+                        movement={movement}
+                        onEdit={() => handleEditMovement(movement)}
+                        onDelete={() => requestDeleteMovement(movement.id)}
+                      />
+                    ))
+                  ) : (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="search-outline" size={22} color={palette.textMuted} />
+                      <Text style={styles.bodyText}>Nenhum movimento combina com esses filtros.</Text>
+                    </View>
+                  )}
+                </View>
+              </Card>
+            </View>
+          )}
+
+          {activeTab === 'wallet' && (
+            <View style={styles.stack}>
+              <WalletHeroCard
+                totalBalance={currency.format(totalBalance)}
+                availableCredit={currency.format(Math.max(cardState.reduce((sum, card) => sum + (card.limit - card.used), 0), 0))}
+                cardsCount={cardState.length}
+                accountsCount={accountState.length}
+              />
+
+              {cardState.length > 0 ? (
+                <Card variant="soft">
+                  <View style={styles.rowBetween}>
+                    <Text style={styles.cardTitle}>Seus cartoes</Text>
+                    <Text style={styles.mutedText}>{cardState.length} ativos</Text>
+                  </View>
+                  <View style={styles.walletPassStack}>
+                    {cardState.map((card, index) => {
+                      const linkedAccount = accountState.find((account) => account.id === card.walletAccountId);
+                      const remaining = Math.max(card.limit - card.used, 0);
+
+                      return (
+                        <WalletPassCard
+                          key={card.id}
+                          card={card}
+                          linkedAccountName={linkedAccount?.name}
+                          remaining={currency.format(remaining)}
+                          onEdit={() => handleEditCard(card)}
+                          onDelete={() => requestDeleteCard(card.id)}
+                          index={index}
+                        />
+                      );
+                    })}
+                  </View>
+                </Card>
+              ) : null}
+
+              <Card variant="soft">
+                <Text style={styles.cardTitle}>Contas na carteira</Text>
+                <View style={styles.walletAccountGrid}>
+                  <WalletAccountSummaryCard title="Conta pessoal" amount={currency.format(personalBalance)} detail="Dia a dia" accent="#1F2227" />
+                  <WalletAccountSummaryCard title="Conta PJ" amount={currency.format(businessBalance)} detail="Operacao" accent="#F5A524" />
+                  <WalletAccountSummaryCard title="Reserva" amount={currency.format(reserveBalance)} detail="Seguranca" accent="#43C463" />
+                </View>
+              </Card>
+
+              <Card>
+                <View style={styles.rowBetween}>
+                  <Text style={styles.cardTitle}>Contas</Text>
+                  <Pressable
+                    onPress={() => {
+                      setShowAccountForm((value) => !value);
+                      if (showAccountForm) {
+                        setEditingAccountId(null);
+                        setAccountForm(defaultAccountForm);
+                      }
+                    }}
+                  >
+                    <Text style={styles.inlineLink}>{showAccountForm ? 'Fechar' : 'Nova conta'}</Text>
+                  </Pressable>
+                </View>
+                {showAccountForm ? (
+                  <View style={styles.manualForm}>
+                    <TextInput
+                      value={accountForm.name}
+                      onChangeText={(value) => setAccountForm((current) => ({ ...current, name: value }))}
+                      placeholder="Nome da conta"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <TextInput
+                      value={accountForm.detail}
+                      onChangeText={(value) => setAccountForm((current) => ({ ...current, detail: value }))}
+                      placeholder="Descricao curta"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <View style={styles.pillRow}>
+                      <Pill
+                        label={accountForm.kind === 'reserve' ? 'Reserva' : 'Conta'}
+                        selected
+                        onPress={() => setAccountForm((current) => ({ ...current, kind: current.kind === 'reserve' ? 'cash' : 'reserve' }))}
+                      />
+                      <Pill
+                        label={accountForm.isBusiness ? 'Negocio' : 'Pessoal'}
+                        selected
+                        onPress={() => setAccountForm((current) => ({ ...current, isBusiness: !current.isBusiness }))}
+                      />
+                    </View>
+                    <Pressable style={styles.primaryButtonCompact} onPress={() => void handleSaveAccount()}>
+                      <Text style={styles.primaryButtonText}>{editingAccountId ? 'Atualizar conta' : 'Salvar conta'}</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+                <View style={styles.detailStack}>
+                  {accountState.map((account) => (
+                    <View key={account.id} style={styles.entityCard}>
+                      <View style={styles.accountRow}>
+                        <View>
+                          <Text style={styles.cardTitle}>{account.name}</Text>
+                          <Text style={styles.mutedText}>{account.detail}</Text>
+                        </View>
+                        <Text style={styles.amountPositive}>{currency.format(account.balance)}</Text>
+                      </View>
+                      <View style={styles.inlineActions}>
+                        <Pressable onPress={() => handleEditAccount(account)}>
+                          <Text style={styles.inlineLink}>Editar</Text>
+                        </Pressable>
+                        <Pressable onPress={() => requestDeleteAccount(account.id)}>
+                          <Text style={styles.inlineDanger}>Excluir</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </Card>
+
+              <Card>
+                <View style={styles.rowBetween}>
+                  <Text style={styles.cardTitle}>Cartoes</Text>
+                  <Pressable
+                    onPress={() => {
+                      setShowCardForm((value) => !value);
+                      if (showCardForm) {
+                        setEditingCardId(null);
+                        setCardForm(defaultCardForm);
+                      }
+                    }}
+                  >
+                    <Text style={styles.inlineLink}>{showCardForm ? 'Fechar' : 'Novo cartao'}</Text>
+                  </Pressable>
+                </View>
+                {showCardForm ? (
+                  <View style={styles.manualForm}>
+                    <TextInput
+                      value={cardForm.name}
+                      onChangeText={(value) => setCardForm((current) => ({ ...current, name: value }))}
+                      placeholder="Nome do cartao"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <TextInput
+                      value={cardForm.limit}
+                      onChangeText={(value) => setCardForm((current) => ({ ...current, limit: value }))}
+                      placeholder="Limite"
+                      keyboardType="decimal-pad"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <TextInput
+                      value={cardForm.used}
+                      onChangeText={(value) => setCardForm((current) => ({ ...current, used: value }))}
+                      placeholder="Valor usado"
+                      keyboardType="decimal-pad"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <View style={styles.selectionBlock}>
+                      <Text style={styles.mutedText}>Vincular a conta</Text>
+                      <View style={styles.pillRow}>
+                        <Pill
+                          label="Sem vinculo"
+                          selected={!cardForm.walletAccountId}
+                          onPress={() => setCardForm((current) => ({ ...current, walletAccountId: '' }))}
+                        />
+                        {accountState.map((account) => (
+                          <Pill
+                            key={account.id}
+                            label={account.name}
+                            selected={cardForm.walletAccountId === account.id}
+                            onPress={() => setCardForm((current) => ({ ...current, walletAccountId: account.id }))}
+                          />
+                        ))}
+                      </View>
+                    </View>
+                    <Pressable style={styles.primaryButtonCompact} onPress={() => void handleSaveCard()}>
+                      <Text style={styles.primaryButtonText}>{editingCardId ? 'Atualizar cartao' : 'Salvar cartao'}</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+                <View style={styles.detailStack}>
+                  {cardState.map((card) => {
+                    const remaining = card.limit - card.used;
+                    const linkedAccount = accountState.find((account) => account.id === card.walletAccountId);
+                    return (
+                      <View key={card.id} style={styles.entityCard}>
+                        <View style={styles.cardBlock}>
+                          <View style={styles.rowBetween}>
+                            <Text style={styles.cardTitle}>{card.name}</Text>
+                            <Text style={styles.mutedText}>{currency.format(remaining)} livre</Text>
+                          </View>
+                          <Text style={styles.mutedText}>
+                            {linkedAccount ? `Vinculado a ${linkedAccount.name}` : 'Sem conta vinculada'}
+                          </Text>
+                          <View style={styles.progressTrack}>
+                            <View
+                              style={[
+                                styles.progressFill,
+                                { width: `${card.limit > 0 ? Math.min((card.used / card.limit) * 100, 100) : 0}%` },
+                              ]}
+                            />
+                          </View>
+                        </View>
+                        <View style={styles.inlineActions}>
+                          <Pressable onPress={() => handleEditCard(card)}>
+                            <Text style={styles.inlineLink}>Editar</Text>
+                          </Pressable>
+                          <Pressable onPress={() => requestDeleteCard(card.id)}>
+                            <Text style={styles.inlineDanger}>Excluir</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              </Card>
+            </View>
+          )}
+
+          {activeTab === 'plan' && (
+            <View style={styles.stack}>
+              <Card variant="soft">
+                <GoalsOverviewCard total={currency.format(decoratedGoals.reduce((sum, goal) => sum + goal.target, 0))} goals={decoratedGoals} />
+              </Card>
+
+              <Card variant="soft">
+                <View style={styles.rowBetween}>
+                  <Text style={styles.cardTitle}>Todas as metas</Text>
+                  <Pressable onPress={() => setShowGoalForm((value) => !value)}>
+                    <Text style={styles.inlineLink}>{showGoalForm ? 'Fechar' : 'Nova meta'}</Text>
+                  </Pressable>
+                </View>
+                {showGoalForm ? (
+                  <View style={styles.manualForm}>
+                    <TextInput
+                      value={goalForm.title}
+                      onChangeText={(value) => setGoalForm((current) => ({ ...current, title: value }))}
+                      placeholder="Nome da meta"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <TextInput
+                      value={goalForm.target}
+                      onChangeText={(value) => setGoalForm((current) => ({ ...current, target: value }))}
+                      placeholder="Quanto voce quer juntar"
+                      keyboardType="decimal-pad"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <TextInput
+                      value={goalForm.current}
+                      onChangeText={(value) => setGoalForm((current) => ({ ...current, current: value }))}
+                      placeholder="Quanto ja tem guardado"
+                      keyboardType="decimal-pad"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <Pressable style={styles.primaryButtonCompact} onPress={handleSaveGoal}>
+                      <Text style={styles.primaryButtonText}>Salvar meta</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+                <View style={styles.detailStack}>
+                  {decoratedGoals.map((goal) => (
+                    <View key={goal.id} style={styles.goalEditableItem}>
+                      <GoalListItem
+                        title={goal.title}
+                        current={goal.current}
+                        target={goal.target}
+                        progress={goal.progress}
+                        accent={goal.accent}
+                      />
+                      <Pressable onPress={() => handleDeleteGoal(goal.id)}>
+                        <Text style={styles.inlineDanger}>Excluir meta</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+                </View>
+              </Card>
+
+              <Card variant="soft">
+                <View style={styles.rowBetween}>
+                  <Text style={styles.cardTitle}>Contas futuras</Text>
+                  <Pressable onPress={() => setShowBillForm((value) => !value)}>
+                    <Text style={styles.inlineLink}>{showBillForm ? 'Fechar' : 'Nova conta'}</Text>
+                  </Pressable>
+                </View>
+                {showBillForm ? (
+                  <View style={styles.manualForm}>
+                    <TextInput
+                      value={billForm.title}
+                      onChangeText={(value) => setBillForm((current) => ({ ...current, title: value }))}
+                      placeholder="Nome da conta"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <TextInput
+                      value={billForm.amount}
+                      onChangeText={(value) => setBillForm((current) => ({ ...current, amount: value }))}
+                      placeholder="Valor"
+                      keyboardType="decimal-pad"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <TextInput
+                      value={billForm.due}
+                      onChangeText={(value) => setBillForm((current) => ({ ...current, due: value }))}
+                      placeholder="Vencimento (AAAA-MM-DD)"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <Pressable style={styles.primaryButtonCompact} onPress={handleSaveBill}>
+                      <Text style={styles.primaryButtonText}>Salvar conta futura</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+                <View style={styles.detailStack}>
+                  {billState.map((bill) => (
+                    <View key={bill.id} style={styles.goalSubCard}>
+                      <View style={styles.flexOne}>
+                        <Text style={styles.cardTitle}>{bill.title}</Text>
+                        <Text style={styles.mutedText}>Vence {formatBillDue(bill.due)}</Text>
+                      </View>
+                      <View style={styles.billItemSide}>
+                        <Text style={styles.amountNegative}>{currency.format(bill.amount)}</Text>
+                        <Pressable onPress={() => handleDeleteBill(bill.id)}>
+                          <Text style={styles.inlineDanger}>Excluir</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </Card>
+            </View>
+          )}
+        </ScrollView>
+
+        <View style={styles.bottomBar}>
+          <View style={styles.bottomBarSide}>
+            {leftDockTabs.map((item) => {
+              const active = activeTab === item.key;
+
+              return (
+                <Pressable key={item.key} style={styles.tabButton} onPress={() => setActiveTab(item.key)}>
+                  <Ionicons name={active ? item.activeIcon : item.icon} size={20} color={active ? '#FFFFFF' : '#7D8796'} />
+                  <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{item.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Pressable style={styles.assistantDockButton} onPress={() => setActiveTab('assistant')}>
+            <LinearGradient colors={palette.avatarGradient} style={styles.assistantDockCore}>
+              <Ionicons name="navigate" size={24} color={palette.background} />
+            </LinearGradient>
+            <Text style={[styles.assistantDockLabel, activeTab === 'assistant' && styles.assistantDockLabelActive]}>Norte IA</Text>
+          </Pressable>
+
+          <View style={styles.bottomBarSide}>
+            {rightDockTabs.map((item) => {
+              const active = activeTab === item.key;
+
+              return (
+                <Pressable key={item.key} style={styles.tabButton} onPress={() => setActiveTab(item.key)}>
+                  <Ionicons name={active ? item.activeIcon : item.icon} size={20} color={active ? '#FFFFFF' : '#7D8796'} />
+                  <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{item.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        <Modal visible={isDrawerOpen} animationType="fade" transparent onRequestClose={() => setIsDrawerOpen(false)}>
+          <View style={styles.drawerBackdrop}>
+            <Pressable style={styles.drawerScrim} onPress={() => setIsDrawerOpen(false)} />
+            <View style={styles.drawerPanel}>
+              <View style={styles.drawerTop}>
+                <LinearGradient colors={palette.drawerGradient} style={styles.drawerHero}>
+                  <View style={styles.rowBetween}>
+                    <View>
+                      <Text style={styles.cardEyebrow}>Workspace</Text>
+                      <Text style={styles.drawerTitle}>Norte pessoal</Text>
+                    </View>
+                    <LinearGradient colors={palette.avatarGradient} style={styles.drawerAvatar}>
+                      <Text style={styles.drawerAvatarText}>{userInitials || 'N'}</Text>
+                    </LinearGradient>
+                  </View>
+                  <Text style={styles.bodyText}>
+                    Cada usuario entra na propria area. Seus dados ficam isolados por conta e protegidos pelo Supabase.
+                  </Text>
+                </LinearGradient>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.drawerContent}>
+                <DrawerSection title="Principal">
+                  <DrawerItem icon="home-outline" label="Home" active={activeTab === 'home'} onPress={() => handleDrawerNavigate('home')} />
+                  <DrawerItem
+                    icon="sparkles-outline"
+                    label="Norte IA"
+                    active={activeTab === 'assistant'}
+                    onPress={() => handleDrawerNavigate('assistant')}
+                  />
+                  <DrawerItem
+                    icon="swap-horizontal-outline"
+                    label="Movimentos"
+                    active={activeTab === 'moves'}
+                    onPress={() => handleDrawerNavigate('moves')}
+                  />
+                  <DrawerItem
+                    icon="wallet-outline"
+                    label="Carteira"
+                    active={activeTab === 'wallet'}
+                    onPress={() => handleDrawerNavigate('wallet')}
+                  />
+                  <DrawerItem icon="flag-outline" label="Planejar" active={activeTab === 'plan'} onPress={() => handleDrawerNavigate('plan')} />
+                </DrawerSection>
+
+                <DrawerSection title="Explorar">
+                  <DrawerItem
+                    icon="briefcase-outline"
+                    label="Area do negocio"
+                    active={activeTab === 'home' && focusPanel === 'business'}
+                    onPress={() => handleDrawerNavigate('business')}
+                  />
+                  <DrawerItem
+                    icon="analytics-outline"
+                    label="Analises"
+                    active={activeTab === 'home' && focusPanel === 'analysis'}
+                    onPress={() => handleDrawerNavigate('analysis')}
+                  />
+                  <DrawerItem
+                    icon="settings-outline"
+                    label="Configuracoes"
+                    active={activeTab === 'home' && focusPanel === 'settings'}
+                    onPress={() => handleDrawerNavigate('settings')}
+                  />
+                </DrawerSection>
+
+                <DrawerSection title="Conta">
+                  <DrawerItem icon="person-outline" label={userDisplayName} active={false} onPress={() => setIsProfileOpen(true)} />
+                  <DrawerItem icon="log-out-outline" label="Sair da conta" active={false} onPress={() => void handleSignOut()} />
+                </DrawerSection>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      </SafeAreaView>
+    </Shell>
+  );
+}
+
+function Shell({ children, theme }: { children: ReactNode; theme: ThemePalette }) {
+  return (
+    <LinearGradient
+      colors={theme.id === 'dark' ? [theme.background, theme.backgroundElevated, theme.background] : [theme.background, theme.background, theme.backgroundSoft]}
+      style={styles.container}
+    >
+      {children}
+    </LinearGradient>
+  );
+}
+
+function Card({ children, variant = 'default' }: { children: ReactNode; variant?: 'default' | 'soft' }) {
+  return <View style={[styles.card, variant === 'soft' && styles.cardSoft]}>{children}</View>;
+}
+
+function DrawerSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <View style={styles.drawerSection}>
+      <Text style={styles.drawerSectionTitle}>{title}</Text>
+      <View style={styles.drawerSectionBody}>{children}</View>
+    </View>
+  );
+}
+
+function DrawerItem({
+  icon,
+  label,
+  active,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={[styles.drawerItem, active && styles.drawerItemActive]}>
+      <Ionicons name={icon} size={18} color={active ? palette.text : palette.textMuted} />
+      <Text style={[styles.drawerItemText, active && styles.drawerItemTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function FeatureRow({
+  icon,
+  title,
+  description,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  description: string;
+}) {
+  return (
+    <View style={styles.featureRow}>
+      <View style={styles.featureIcon}>
+        <Ionicons name={icon} size={18} color={palette.text} />
+      </View>
+      <View style={styles.featureText}>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.bodyText}>{description}</Text>
+      </View>
+    </View>
+  );
+}
+
+function SelectableCard({
+  selected,
+  title,
+  description,
+  onPress,
+}: {
+  selected: boolean;
+  title: string;
+  description: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={[styles.selectableCard, selected && styles.selectableCardActive]}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      <Text style={styles.bodyText}>{description}</Text>
+    </Pressable>
+  );
+}
+
+function Pill({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={[styles.pill, selected && styles.pillActive]}>
+      <Text style={[styles.pillText, selected && styles.pillTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.miniMetric}>
+      <Text style={styles.mutedText}>{label}</Text>
+      <Text style={styles.cardTitle}>{value}</Text>
+    </View>
+  );
+}
+
+function BalanceSpotlightCard({
+  totalBalance,
+  personalBalance,
+  businessBalance,
+  spendableToday,
+  onOpenWallet,
+  onOpenMoves,
+  onOpenPlan,
+  onOpenAssistant,
+}: {
+  totalBalance: string;
+  personalBalance: string;
+  businessBalance: string;
+  spendableToday: string;
+  onOpenWallet: () => void;
+  onOpenMoves: () => void;
+  onOpenPlan: () => void;
+  onOpenAssistant: () => void;
+}) {
+  return (
+    <View style={styles.balanceSpotlight}>
+      <View style={styles.balanceChip}>
+        <View style={styles.balanceChipDot} />
+        <Text style={styles.balanceChipText}>Saldo geral</Text>
+      </View>
+      <Text style={styles.balanceCaption}>Seu saldo</Text>
+      <Text style={styles.balanceAmount}>{totalBalance}</Text>
+      <View style={styles.balanceBreakdownRow}>
+        <View style={styles.balanceBreakdownCard}>
+          <Text style={styles.balanceBreakdownLabel}>Conta pessoal</Text>
+          <Text style={styles.balanceBreakdownValue}>{personalBalance}</Text>
+        </View>
+        <View style={styles.balanceBreakdownCard}>
+          <Text style={styles.balanceBreakdownLabel}>Conta PJ</Text>
+          <Text style={styles.balanceBreakdownValue}>{businessBalance}</Text>
+        </View>
+      </View>
+      <View style={styles.balanceSpendablePill}>
+        <Text style={styles.balanceSpendableLabel}>Disponivel para gastar hoje</Text>
+        <Text style={styles.balanceSpendableValue}>{spendableToday}</Text>
+      </View>
+      <View style={styles.balanceActions}>
+        <QuickAction icon="wallet-outline" label="Carteira" onPress={onOpenWallet} />
+        <QuickAction icon="swap-horizontal-outline" label="Mov." onPress={onOpenMoves} />
+        <QuickAction icon="flag-outline" label="Metas" onPress={onOpenPlan} />
+        <QuickAction icon="navigate-outline" label="Norte IA" onPress={onOpenAssistant} />
+      </View>
+    </View>
+  );
+}
+
+function GuidanceCard({
+  eyebrow,
+  title,
+  description,
+  icon,
+  onPress,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={styles.guidanceCard}>
+      <View style={styles.guidanceIcon}>
+        <Ionicons name={icon} size={20} color={palette.text} />
+      </View>
+      <View style={styles.guidanceContent}>
+        <Text style={styles.guidanceEyebrow}>{eyebrow}</Text>
+        <Text style={styles.guidanceTitle}>{title}</Text>
+        <Text style={styles.guidanceDescription}>{description}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />
+    </Pressable>
+  );
+}
+
+function WalletHeroCard({
+  totalBalance,
+  availableCredit,
+  cardsCount,
+  accountsCount,
+}: {
+  totalBalance: string;
+  availableCredit: string;
+  cardsCount: number;
+  accountsCount: number;
+}) {
+  return (
+    <View style={styles.walletHeroWrap}>
+      <LinearGradient colors={palette.id === 'dark' ? ['#262B33', '#14181E'] : ['#1F2227', '#3A404A']} style={styles.walletHeroCard}>
+        <View style={styles.rowBetween}>
+          <View>
+            <Text style={styles.walletHeroEyebrow}>Norte Wallet</Text>
+            <Text style={styles.walletHeroAmount}>{totalBalance}</Text>
+          </View>
+          <View style={styles.walletHeroMark}>
+            <Ionicons name="wallet" size={18} color="#FFFFFF" />
+          </View>
+        </View>
+        <View style={styles.walletHeroFooter}>
+          <View>
+            <Text style={styles.walletHeroLabel}>Credito livre</Text>
+            <Text style={styles.walletHeroValue}>{availableCredit}</Text>
+          </View>
+          <View>
+            <Text style={styles.walletHeroLabel}>Carteira ativa</Text>
+            <Text style={styles.walletHeroValue}>
+              {cardsCount} cartoes, {accountsCount} contas
+            </Text>
+          </View>
+        </View>
+      </LinearGradient>
+      <View style={styles.walletHeroShadowCard} />
+      <View style={styles.walletHeroShadowCardBack} />
+    </View>
+  );
+}
+
+function WalletPassCard({
+  card,
+  linkedAccountName,
+  remaining,
+  onEdit,
+  onDelete,
+  index,
+}: {
+  card: WalletCard;
+  linkedAccountName?: string;
+  remaining: string;
+  onEdit: () => void;
+  onDelete: () => void;
+  index: number;
+}) {
+  const tone = [
+    ['#23272D', '#111419'],
+    ['#2E3744', '#141B22'],
+    ['#6A4E20', '#1C1710'],
+  ][index % 3] as [string, string];
+
+  return (
+    <LinearGradient colors={tone} style={[styles.walletPassCard, index > 0 && styles.walletPassCardOffset]}>
+      <View style={styles.rowBetween}>
+        <Text style={styles.walletPassBrand}>NORTE</Text>
+        <Ionicons name="radio-button-on" size={18} color="rgba(255,255,255,0.86)" />
+      </View>
+      <View style={styles.walletPassMiddle}>
+        <Text style={styles.walletPassName}>{card.name}</Text>
+        <Text style={styles.walletPassNumber}>•••• {String(card.id).slice(-4)}</Text>
+      </View>
+      <View style={styles.rowBetween}>
+        <View>
+          <Text style={styles.walletPassLabel}>{linkedAccountName ? `Conta ${linkedAccountName}` : 'Sem conta vinculada'}</Text>
+          <Text style={styles.walletPassValue}>{remaining} livre</Text>
+        </View>
+        <View style={styles.walletPassActions}>
+          <Pressable onPress={onEdit}>
+            <Text style={styles.walletPassActionText}>Editar</Text>
+          </Pressable>
+          <Pressable onPress={onDelete}>
+            <Text style={styles.walletPassActionDanger}>Excluir</Text>
+          </Pressable>
+        </View>
+      </View>
+    </LinearGradient>
+  );
+}
+
+function WalletAccountSummaryCard({
+  title,
+  amount,
+  detail,
+  accent,
+}: {
+  title: string;
+  amount: string;
+  detail: string;
+  accent: string;
+}) {
+  return (
+    <View style={styles.walletAccountSummaryCard}>
+      <View style={[styles.walletAccountAccent, { backgroundColor: accent }]} />
+      <Text style={styles.walletAccountTitle}>{title}</Text>
+      <Text style={styles.walletAccountAmount}>{amount}</Text>
+      <Text style={styles.walletAccountDetail}>{detail}</Text>
+    </View>
+  );
+}
+
+function QuickAction({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={styles.quickAction}>
+      <View style={styles.quickActionIcon}>
+        <Ionicons name={icon} size={16} color={palette.id === 'dark' ? palette.text : '#F8F8F6'} />
+      </View>
+      <Text style={styles.quickActionLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function GoalListItem({
+  title,
+  current,
+  target,
+  progress,
+  accent,
+}: {
+  title: string;
+  current: number;
+  target: number;
+  progress: number;
+  accent: string;
+}) {
+  return (
+    <View style={styles.goalListItem}>
+      <View style={styles.rowBetween}>
+        <View style={styles.goalListTitleWrap}>
+          <View style={[styles.goalListIcon, { borderColor: accent }]}>
+            <View style={[styles.goalListIconCore, { backgroundColor: accent }]} />
+          </View>
+          <Text style={styles.cardTitle}>{title}</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
+      </View>
+      <View style={styles.rowBetween}>
+        <Text style={styles.goalMetricText}>{currency.format(current)}</Text>
+        <Text style={styles.goalMetricText}>{currency.format(target)}</Text>
+      </View>
+      <View style={styles.goalTrack}>
+        <View style={[styles.goalFill, { width: `${Math.max(progress * 100, 6)}%`, backgroundColor: accent }]} />
+      </View>
+      <View style={styles.rowBetween}>
+        <Text style={styles.goalMetricSub}>{Math.max(Math.round((target - current) / 250), 1)} dias to go</Text>
+        <Text style={styles.goalMetricSub}>{Math.round(progress * 100)}%</Text>
+      </View>
+    </View>
+  );
+}
+
+function GoalsOverviewCard({
+  total,
+  goals,
+}: {
+  total: string;
+  goals: Array<{ id: string; progress: number; accent: string }>;
+}) {
+  return (
+      <View style={styles.goalsOverviewWrap}>
+        <View style={styles.rowBetween}>
+        <Text style={styles.goalsOverviewTitle}>Metas</Text>
+        <Pressable style={styles.addGoalButton}>
+          <Ionicons name="add" size={14} color={palette.id === 'dark' ? palette.background : '#FFFFFF'} />
+          <Text style={styles.addGoalText}>Nova meta</Text>
+        </Pressable>
+      </View>
+      <View style={styles.goalsBalancePill}>
+        <Text style={styles.goalsBalanceText}>{total}</Text>
+        <Text style={styles.goalsBalanceCaption}>Total planejado</Text>
+      </View>
+      <View style={styles.goalsBarsWrap}>
+        {goals.map((goal, index) => (
+          <View key={goal.id} style={styles.goalBarColumn}>
+            <View style={styles.goalBarTrack}>
+              <View
+                style={[
+                  styles.goalBarFill,
+                  {
+                    height: `${Math.max(goal.progress * 100, 18)}%`,
+                    backgroundColor: goal.accent,
+                  },
+                ]}
+              />
+            </View>
+            <View style={[styles.goalBarBadge, { borderColor: goal.accent }]}>
+              <View style={[styles.goalBarBadgeCore, { backgroundColor: goal.accent }]} />
+            </View>
+            {index < goals.length - 1 ? <View style={styles.goalBarDivider} /> : null}
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function HeroCard({ title, value, description }: { title: string; value: string; description: string }) {
+  return (
+    <LinearGradient colors={palette.heroGradient} style={styles.heroCard}>
+      <Text style={styles.cardEyebrow}>{title}</Text>
+      <Text style={styles.heroValue}>{value}</Text>
+      <Text style={styles.bodyText}>{description}</Text>
+    </LinearGradient>
+  );
+}
+
+function MetricCard({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <View style={styles.metricCard}>
+      <Text style={styles.mutedText}>{label}</Text>
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text style={styles.metricDetail}>{detail}</Text>
+    </View>
+  );
+}
+
+function InsightRow({ text }: { text: string }) {
+  return (
+    <View style={styles.insightRow}>
+      <View style={styles.insightDot} />
+      <Text style={styles.bodyText}>{text}</Text>
+    </View>
+  );
+}
+
+function ModeButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={[styles.modeButton, active && styles.modeButtonActive]}>
+      <Text style={[styles.modeButtonText, active && styles.modeButtonTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function DraftCard({
+  draft,
+  accounts,
+  onSelectContext,
+  onSelectAccount,
+  onRemove,
+}: {
+  draft: DraftEntry;
+  accounts: Account[];
+  onSelectContext: (context: EntryContext) => void;
+  onSelectAccount: (walletAccountId: string) => void;
+  onRemove: () => void;
+}) {
+  const selectedAccount = accounts.find((account) => account.id === draft.walletAccountId);
+
+  return (
+    <View style={styles.draftCard}>
+      <View style={styles.rowBetween}>
+        <View style={styles.flexOne}>
+          <Text style={styles.cardTitle}>{draft.title}</Text>
+          <Text style={styles.mutedText}>{draft.note}</Text>
+        </View>
+        <Text style={draft.type === 'income' ? styles.amountPositive : styles.amountNegative}>
+          {draft.type === 'income' ? '+' : '-'}
+          {currency.format(draft.amount)}
+        </Text>
+      </View>
+      {draft.question ? <Text style={styles.bodyText}>{draft.question}</Text> : null}
+      <View style={styles.pillRow}>
+        <Pill label="Pessoal" selected={draft.context === 'Pessoal'} onPress={() => onSelectContext('Pessoal')} />
+        <Pill label="Negocio" selected={draft.context === 'Negocio'} onPress={() => onSelectContext('Negocio')} />
+        <Pill
+          label="Compartilhado"
+          selected={draft.context === 'Compartilhado'}
+          onPress={() => onSelectContext('Compartilhado')}
+        />
+      </View>
+      {draft.context ? (
+        <View style={styles.selectionBlock}>
+          <Text style={styles.mutedText}>
+            Conta de destino{selectedAccount ? `: ${selectedAccount.name}` : ''}
+          </Text>
+          <View style={styles.pillRow}>
+            {accounts.map((account) => (
+              <Pill
+                key={account.id}
+                label={account.name}
+                selected={draft.walletAccountId === account.id}
+                onPress={() => onSelectAccount(account.id)}
+              />
+            ))}
+          </View>
+        </View>
+      ) : null}
+      <Pressable onPress={onRemove}>
+        <Text style={styles.inlineLink}>Descartar rascunho</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function MessageBubble({ role, text }: { role: 'user' | 'assistant'; text: string }) {
+  return (
+    <View style={[styles.messageBubble, role === 'assistant' ? styles.assistantBubble : styles.userBubble]}>
+      <Text style={styles.messageRole}>{role === 'assistant' ? 'Norte' : 'Voce'}</Text>
+      <Text style={styles.bodyText}>{text}</Text>
+    </View>
+  );
+}
+
+function MovementRow({
+  movement,
+  onEdit,
+  onDelete,
+}: {
+  movement: Movement;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <View style={styles.movementRow}>
+      <View style={styles.rowBetween}>
+        <View style={styles.flexOne}>
+          <Text style={styles.cardTitle}>{movement.title}</Text>
+          <Text style={styles.mutedText}>
+            {formatMovementDate(movement.createdAt)} • {movement.source} • {movement.account}
+          </Text>
+        </View>
+        <Text style={movement.type === 'income' ? styles.amountPositive : styles.amountNegative}>
+          {movement.type === 'income' ? '+' : '-'}
+          {currency.format(movement.amount)}
+        </Text>
+      </View>
+      <View style={styles.tag}>
+        <Text style={styles.tagText}>{movement.context}</Text>
+      </View>
+      <View style={styles.inlineActions}>
+        <Pressable onPress={onEdit}>
+          <Text style={styles.inlineLink}>Editar</Text>
+        </Pressable>
+        <Pressable onPress={onDelete}>
+          <Text style={styles.inlineDanger}>Excluir</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function createStyles(palette: ThemePalette) {
+  return StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: palette.background,
+  },
+  safeArea: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: 132,
+    gap: spacing.lg,
+  },
+  stack: {
+    gap: spacing.lg,
+  },
+  loadingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.lg,
+    paddingHorizontal: spacing.lg,
+  },
+  authWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  welcomeWrap: {
+    flex: 1,
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xxl,
+    paddingBottom: spacing.xl,
+  },
+  logoLockup: {
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  brand: {
+    color: palette.text,
+    fontSize: 34,
+    fontWeight: '700',
+    letterSpacing: -1,
+  },
+  subtitle: {
+    color: palette.textMuted,
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: 'center',
+    maxWidth: 320,
+  },
+  featureStack: {
+    gap: spacing.md,
+  },
+  featureRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  featureIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.backgroundSoft,
+  },
+  featureText: {
+    flex: 1,
+    gap: 4,
+  },
+  primaryButton: {
+    minHeight: 54,
+    borderRadius: radius.pill,
+    backgroundColor: palette.text,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+  },
+  primaryButtonCompact: {
+    minHeight: 46,
+    borderRadius: radius.pill,
+    backgroundColor: palette.text,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  primaryButtonDisabled: {
+    opacity: 0.45,
+  },
+  primaryButtonText: {
+    color: palette.background,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    minHeight: 54,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: palette.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  secondaryButtonText: {
+    color: palette.text,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  onboardingHeader: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+    gap: 8,
+  },
+  kicker: {
+    color: palette.textMuted,
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 1.4,
+  },
+  sectionTitle: {
+    color: palette.text,
+    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: -1,
+  },
+  bodyText: {
+    color: palette.textMuted,
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  backendHint: {
+    color: palette.textMuted,
+    fontSize: 12,
+  },
+  footerActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xl,
+  },
+  selectableCard: {
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+    gap: 8,
+  },
+  selectableCardActive: {
+    borderColor: palette.borderStrong,
+    backgroundColor: palette.surfaceStrong,
+  },
+  pillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  pill: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.pill,
+    backgroundColor: palette.backgroundSoft,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  pillActive: {
+    backgroundColor: palette.surfaceStrong,
+    borderColor: palette.borderStrong,
+  },
+  pillText: {
+    color: palette.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  pillTextActive: {
+    color: palette.text,
+  },
+  card: {
+    borderRadius: radius.lg,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  cardSoft: {
+    backgroundColor: palette.id === 'dark' ? palette.surface : '#FCFBF8',
+    shadowColor: palette.shadow,
+    shadowOpacity: palette.id === 'dark' ? 0.16 : 0.08,
+    shadowRadius: 14,
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+    elevation: 4,
+  },
+  miniMetric: {
+    flex: 1,
+    gap: 4,
+  },
+  metricRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  appHeader: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  headerLeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  headerMenuButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.id === 'dark' ? palette.surface : '#FFFFFF',
+  },
+  appTitle: {
+    color: palette.text,
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: -0.4,
+  },
+  headerMeta: {
+    color: palette.textMuted,
+    fontSize: 13,
+    marginTop: 2,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  headerBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    backgroundColor: palette.id === 'dark' ? palette.surface : '#FFFFFF',
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  headerBadgeText: {
+    color: palette.text,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  headerIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+  },
+  avatarButton: {
+    borderRadius: 22,
+  },
+  avatarGradient: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    color: palette.background,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  profilePopover: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: palette.backgroundElevated,
+    borderWidth: 1,
+    borderColor: palette.border,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  profileIdentity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  profileAvatarLarge: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileAvatarText: {
+    color: palette.background,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  profileAction: {
+    minHeight: 48,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  profileActionText: {
+    color: palette.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  heroCard: {
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    borderWidth: 1,
+    borderColor: palette.borderStrong,
+    gap: spacing.sm,
+  },
+  cardEyebrow: {
+    color: palette.textMuted,
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 1.5,
+  },
+  heroValue: {
+    color: palette.text,
+    fontSize: 38,
+    fontWeight: '700',
+    letterSpacing: -1.4,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+  },
+  metricCard: {
+    width: '47.6%',
+    minHeight: 156,
+    borderRadius: radius.md,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
+    padding: spacing.md,
+    gap: 10,
+  },
+  metricValue: {
+    color: palette.text,
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: -0.8,
+  },
+  metricDetail: {
+    color: palette.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  inlineLink: {
+    color: palette.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  detailStack: {
+    gap: spacing.md,
+  },
+  balanceSpotlight: {
+    borderRadius: 30,
+    backgroundColor: '#1A1C20',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xl,
+    gap: spacing.md,
+    shadowColor: '#050608',
+    shadowOpacity: 0.24,
+    shadowRadius: 24,
+    shadowOffset: {
+      width: 0,
+      height: 16,
+    },
+    elevation: 8,
+  },
+  balanceChip: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  balanceChipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#46C56A',
+  },
+  balanceChipText: {
+    color: '#D6DBE3',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  balanceCaption: {
+    color: '#9FA8B7',
+    fontSize: 13,
+  },
+  balanceAmount: {
+    color: '#FFFFFF',
+    fontSize: 36,
+    fontWeight: '700',
+    letterSpacing: -1.2,
+  },
+  balanceBreakdownRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  balanceBreakdownCard: {
+    flex: 1,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    gap: 6,
+  },
+  balanceBreakdownLabel: {
+    color: '#9FA8B7',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  balanceBreakdownValue: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: -0.6,
+  },
+  balanceSpendablePill: {
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    gap: 4,
+  },
+  balanceSpendableLabel: {
+    color: '#AEB7C3',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  balanceSpendableValue: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: -0.8,
+  },
+  balanceActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  quickAction: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 8,
+  },
+  quickActionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickActionLabel: {
+    color: '#D7DCE4',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  guidanceCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.borderStrong,
+    backgroundColor: palette.surface,
+  },
+  guidanceIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.accentGlow,
+  },
+  guidanceContent: {
+    flex: 1,
+    gap: 3,
+  },
+  guidanceEyebrow: {
+    color: palette.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+  },
+  guidanceTitle: {
+    color: palette.text,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  guidanceDescription: {
+    color: palette.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  walletHeroWrap: {
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+  },
+  walletHeroCard: {
+    borderRadius: 30,
+    padding: spacing.xl,
+    gap: spacing.xl,
+    zIndex: 3,
+    shadowColor: '#07090C',
+    shadowOpacity: 0.24,
+    shadowRadius: 22,
+    shadowOffset: {
+      width: 0,
+      height: 16,
+    },
+    elevation: 12,
+  },
+  walletHeroShadowCard: {
+    position: 'absolute',
+    left: 18,
+    right: 18,
+    top: 18,
+    height: '92%',
+    borderRadius: 28,
+    backgroundColor: palette.id === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(31,34,39,0.12)',
+    zIndex: 2,
+  },
+  walletHeroShadowCardBack: {
+    position: 'absolute',
+    left: 36,
+    right: 36,
+    top: 34,
+    height: '84%',
+    borderRadius: 24,
+    backgroundColor: palette.id === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(31,34,39,0.07)',
+    zIndex: 1,
+  },
+  walletHeroEyebrow: {
+    color: 'rgba(255,255,255,0.68)',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 1.4,
+  },
+  walletHeroAmount: {
+    color: '#FFFFFF',
+    fontSize: 34,
+    fontWeight: '700',
+    letterSpacing: -1.2,
+    marginTop: 8,
+  },
+  walletHeroMark: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  walletHeroFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  walletHeroLabel: {
+    color: 'rgba(255,255,255,0.66)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  walletHeroValue: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+    marginTop: 6,
+  },
+  walletPassStack: {
+    gap: spacing.md,
+  },
+  walletPassCard: {
+    borderRadius: 28,
+    padding: spacing.lg,
+    minHeight: 186,
+    justifyContent: 'space-between',
+    shadowColor: '#07090C',
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    shadowOffset: {
+      width: 0,
+      height: 12,
+    },
+    elevation: 9,
+  },
+  walletPassCardOffset: {
+    marginTop: -14,
+  },
+  walletPassBrand: {
+    color: 'rgba(255,255,255,0.66)',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1.8,
+  },
+  walletPassMiddle: {
+    gap: 6,
+  },
+  walletPassName: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.8,
+  },
+  walletPassNumber: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 2.4,
+  },
+  walletPassLabel: {
+    color: 'rgba(255,255,255,0.64)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  walletPassValue: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 6,
+  },
+  walletPassActions: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  walletPassActionText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  walletPassActionDanger: {
+    color: '#F3A4A4',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  walletAccountGrid: {
+    gap: spacing.md,
+  },
+  walletAccountSummaryCard: {
+    borderRadius: radius.md,
+    backgroundColor: palette.id === 'dark' ? palette.surfaceSoft : '#FFFFFF',
+    borderWidth: 1,
+    borderColor: palette.border,
+    padding: spacing.md,
+    gap: 8,
+  },
+  walletAccountAccent: {
+    width: 34,
+    height: 6,
+    borderRadius: radius.pill,
+  },
+  walletAccountTitle: {
+    color: palette.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 1.1,
+  },
+  walletAccountAmount: {
+    color: palette.text,
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.8,
+  },
+  walletAccountDetail: {
+    color: palette.textMuted,
+    fontSize: 13,
+  },
+  selectionBlock: {
+    gap: spacing.sm,
+  },
+  goalListItem: {
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: palette.id === 'dark' ? palette.surfaceSoft : '#FFFFFF',
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  goalListTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flex: 1,
+  },
+  goalListIcon: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  goalListIconCore: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  goalMetricText: {
+    color: palette.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  goalTrack: {
+    height: 6,
+    borderRadius: radius.pill,
+    backgroundColor: palette.id === 'dark' ? 'rgba(255,255,255,0.08)' : '#ECE8DE',
+    overflow: 'hidden',
+  },
+  goalFill: {
+    height: '100%',
+    borderRadius: radius.pill,
+  },
+  goalMetricSub: {
+    color: palette.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  goalsOverviewWrap: {
+    gap: spacing.md,
+  },
+  goalsOverviewTitle: {
+    color: palette.text,
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.8,
+  },
+  addGoalButton: {
+    minHeight: 32,
+    borderRadius: radius.pill,
+    backgroundColor: palette.text,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  addGoalText: {
+    color: palette.background,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  goalsBalancePill: {
+    alignSelf: 'flex-start',
+    gap: 2,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    backgroundColor: palette.id === 'dark' ? palette.surfaceStrong : '#F3F0E8',
+  },
+  goalsBalanceText: {
+    color: palette.text,
+    fontSize: 20,
+    fontWeight: '700',
+    letterSpacing: -0.6,
+  },
+  goalsBalanceCaption: {
+    color: palette.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  goalsBarsWrap: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    minHeight: 190,
+    paddingTop: spacing.sm,
+  },
+  goalBarColumn: {
+    flex: 1,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  goalBarTrack: {
+    width: '100%',
+    maxWidth: 46,
+    height: 142,
+    borderRadius: 23,
+    backgroundColor: palette.id === 'dark' ? palette.surfaceStrong : '#ECE8DE',
+    justifyContent: 'flex-end',
+    padding: 5,
+  },
+  goalBarFill: {
+    width: '100%',
+    borderRadius: 18,
+    minHeight: 20,
+  },
+  goalBarBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    backgroundColor: palette.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
+    top: 8,
+  },
+  goalBarBadgeCore: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  goalBarDivider: {
+    position: 'absolute',
+    right: -10,
+    top: 54,
+    width: 12,
+    borderTopWidth: 1,
+    borderTopColor: palette.borderStrong,
+  },
+  goalSubCard: {
+    borderRadius: radius.md,
+    padding: spacing.md,
+    backgroundColor: palette.id === 'dark' ? palette.surfaceSoft : '#FFFFFF',
+    borderWidth: 1,
+    borderColor: palette.border,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  goalEditableItem: {
+    gap: spacing.xs,
+  },
+  billItemSide: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+  },
+  insightRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    alignItems: 'flex-start',
+  },
+  insightDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: palette.text,
+    marginTop: 8,
+  },
+  orbStage: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  orbLabel: {
+    color: palette.text,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  modeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  modeButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: radius.pill,
+    backgroundColor: palette.backgroundSoft,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  modeButtonActive: {
+    backgroundColor: palette.surfaceStrong,
+  },
+  modeButtonText: {
+    color: palette.textMuted,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  modeButtonTextActive: {
+    color: palette.text,
+  },
+  quickPromptRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  quickPrompt: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 9,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.backgroundSoft,
+  },
+  quickPromptText: {
+    color: palette.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  inputCard: {
+    gap: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    padding: spacing.md,
+    backgroundColor: palette.surface,
+  },
+  input: {
+    minHeight: 84,
+    color: palette.text,
+    fontSize: 15,
+    lineHeight: 22,
+    textAlignVertical: 'top',
+  },
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.backgroundSoft,
+  },
+  iconButtonActive: {
+    backgroundColor: palette.surfaceStrong,
+    borderWidth: 1,
+    borderColor: palette.borderStrong,
+  },
+  cardTitle: {
+    color: palette.text,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  mutedText: {
+    color: palette.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  draftCard: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+    gap: spacing.md,
+  },
+  statusCard: {
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.backgroundSoft,
+  },
+  statusCardError: {
+    borderColor: 'rgba(206,97,97,0.24)',
+    backgroundColor: palette.id === 'dark' ? 'rgba(206,97,97,0.12)' : 'rgba(206,97,97,0.08)',
+  },
+  statusCardInfo: {
+    borderColor: palette.borderStrong,
+    backgroundColor: palette.id === 'dark' ? 'rgba(255,255,255,0.06)' : '#F7F4EC',
+  },
+  statusCardSuccess: {
+    borderColor: palette.id === 'dark' ? 'rgba(112,215,175,0.28)' : 'rgba(46,154,109,0.24)',
+    backgroundColor: palette.id === 'dark' ? 'rgba(112,215,175,0.1)' : 'rgba(46,154,109,0.08)',
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.lg,
+  },
+  statusText: {
+    color: palette.text,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  statusTextError: {
+    color: palette.danger,
+  },
+  flexOne: {
+    flex: 1,
+  },
+  amountPositive: {
+    color: palette.success,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  amountNegative: {
+    color: palette.warning,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  messageBubble: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    gap: 6,
+  },
+  assistantBubble: {
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  userBubble: {
+    backgroundColor: palette.surfaceStrong,
+  },
+  messageRole: {
+    color: palette.text,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+  },
+  manualForm: {
+    gap: spacing.md,
+  },
+  field: {
+    minHeight: 52,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+    paddingHorizontal: spacing.md,
+    color: palette.text,
+    fontSize: 15,
+  },
+  movementRow: {
+    gap: spacing.sm,
+    paddingBottom: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+  },
+  tag: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: palette.backgroundSoft,
+  },
+  tagText: {
+    color: palette.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  accountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  entityCard: {
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+  },
+  cardBlock: {
+    gap: spacing.sm,
+  },
+  inlineActions: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    alignItems: 'center',
+  },
+  inlineDanger: {
+    color: palette.danger,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  progressTrack: {
+    height: 9,
+    borderRadius: radius.pill,
+    backgroundColor: palette.backgroundSoft,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: radius.pill,
+    backgroundColor: palette.text,
+  },
+  drawerBackdrop: {
+    flex: 1,
+    backgroundColor: palette.overlay,
+    flexDirection: 'row',
+  },
+  drawerScrim: {
+    flex: 1,
+  },
+  drawerPanel: {
+    width: '82%',
+    maxWidth: 360,
+    backgroundColor: palette.backgroundElevated,
+    borderLeftWidth: 1,
+    borderColor: palette.border,
+    paddingTop: spacing.xxl,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xl,
+  },
+  drawerTop: {
+    paddingBottom: spacing.lg,
+  },
+  drawerHero: {
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: palette.borderStrong,
+    gap: spacing.md,
+  },
+  drawerTitle: {
+    color: palette.text,
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: -0.8,
+  },
+  drawerAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  drawerAvatarText: {
+    color: palette.background,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  drawerContent: {
+    gap: spacing.lg,
+    paddingBottom: spacing.xxl,
+  },
+  drawerSection: {
+    gap: spacing.sm,
+  },
+  drawerSectionTitle: {
+    color: palette.textMuted,
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 1.4,
+  },
+  drawerSectionBody: {
+    gap: spacing.sm,
+  },
+  drawerItem: {
+    minHeight: 50,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  drawerItemActive: {
+    backgroundColor: palette.surfaceStrong,
+    borderColor: palette.borderStrong,
+  },
+  drawerItemText: {
+    color: palette.textMuted,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  drawerItemTextActive: {
+    color: palette.text,
+  },
+  bottomBar: {
+    position: 'absolute',
+    left: spacing.lg,
+    right: spacing.lg,
+    bottom: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingTop: 10,
+    paddingBottom: 12,
+    borderRadius: radius.lg,
+    backgroundColor: '#0E1013',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    shadowColor: '#050608',
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+    elevation: 10,
+  },
+  bottomBarSide: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+  },
+  tabButton: {
+    minWidth: 58,
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+  },
+  assistantDockButton: {
+    marginTop: -30,
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: spacing.md,
+  },
+  assistantDockCore: {
+    width: 82,
+    height: 82,
+    borderRadius: 41,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 6,
+    borderColor: '#0E1013',
+    shadowColor: palette.shadow,
+    shadowOpacity: activeThemeMode === 'dark' ? 0.28 : 0.12,
+    shadowRadius: 20,
+  },
+  assistantDockLabel: {
+    color: '#7D8796',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  assistantDockLabelActive: {
+    color: '#FFFFFF',
+  },
+  tabLabel: {
+    color: '#7D8796',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  tabLabelActive: {
+    color: '#FFFFFF',
+  },
+  themePanel: {
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+  },
+  themeOptions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  themeOption: {
+    flex: 1,
+    minHeight: 54,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.backgroundSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  themeOptionActive: {
+    backgroundColor: palette.surfaceStrong,
+    borderColor: palette.borderStrong,
+  },
+  themeOptionText: {
+    color: palette.textMuted,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  themeOptionTextActive: {
+    color: palette.text,
+  },
+  });
+}
