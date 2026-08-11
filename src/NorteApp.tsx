@@ -3273,7 +3273,7 @@ export function NorteApp() {
     );
   }
 
-  if (isAuthLoading && !isSupabaseConfigured()) {
+  if (isAuthLoading && isSupabaseConfigured() && !isLocalMode) {
     return (
       <Shell theme={currentTheme}>
         <SafeAreaView style={styles.safeArea}>
@@ -3336,8 +3336,8 @@ export function NorteApp() {
               />
               <FeatureRow
                 icon="sparkles-outline"
-                title="Base local e funcional"
-                description="Lancamentos manuais, confirmacao pela IA e persistencia no aparelho desde o MVP."
+                title="Clareza que acompanha voce"
+                description="Lançamentos, metas, cartões e decisões financeiras organizados em um só lugar."
               />
             </View>
 
@@ -3358,7 +3358,7 @@ export function NorteApp() {
             <Text style={styles.kicker}>Onboarding</Text>
             <Text style={styles.sectionTitle}>Vamos adaptar o Norte ao seu momento</Text>
             <Text style={styles.bodyText}>
-              Tudo que voce confirmar aqui fica salvo localmente para continuar de onde parou.
+              Suas escolhas orientam a Norte desde o primeiro dia e podem ser ajustadas quando quiser.
             </Text>
           </View>
 
