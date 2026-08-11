@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { applyMovementToAccounts, buildCashForecast, inferMovementCategory, inferOccurrenceDate, parseCurrencyInput, parseDraftCorrectionAmount, parseDraftCorrectionDate, parseFinanceMessage } from '../src/financeEngine.ts';
 import { initialAccounts } from '../src/mockData.ts';
+import { previewStatementCsv } from '../src/statementImport.ts';
 
 const result = parseFinanceMessage('gastei R$ 40,50 na padaria e recebi 1.250,75 do cliente');
 
@@ -47,5 +48,11 @@ const afterReversal = applyMovementToAccounts(afterExpense, expense, -1);
 
 assert.equal(afterExpense.find((account) => account.id === 'a1')?.balance, 2380);
 assert.equal(afterReversal.find((account) => account.id === 'a1')?.balance, 2480);
+
+const statementPreview = previewStatementCsv('Data;Descrição;Valor\n10/08/2026;Uber;-32,50\n11/08/2026;Cliente;900,00', [expense]);
+assert.equal(statementPreview.length, 2);
+assert.equal(statementPreview[0].type, 'expense');
+assert.equal(statementPreview[0].amount, 32.5);
+assert.equal(statementPreview[1].occurredAt, '2026-08-11');
 
 console.log('finance engine checks passed');

@@ -31,6 +31,7 @@ import {
 } from './financeEngine';
 import { NorteOrb } from './NorteOrb';
 import { getMerchantPresentation, getSuggestedMerchantCategory } from './merchantCatalog';
+import { previewStatementCsv, type StatementPreviewItem } from './statementImport';
 import { createRealtimeTransport, isRealtimeVoiceSupported, type RealtimeTransport } from './realtimeTransport';
 import {
   askNorteAssistant,
@@ -575,6 +576,10 @@ export function NorteApp() {
   const [connectionForm, setConnectionForm] = useState<ConnectionFormState>(defaultConnectionForm);
   const [cardPaymentForm, setCardPaymentForm] = useState<CardPaymentFormState>(defaultCardPaymentForm);
   const [isPayingCard, setIsPayingCard] = useState(false);
+  const [showStatementImport, setShowStatementImport] = useState(false);
+  const [statementCsv, setStatementCsv] = useState('');
+  const [statementPreview, setStatementPreview] = useState<StatementPreviewItem[]>([]);
+  const [statementAccountId, setStatementAccountId] = useState('');
   const [movementTypeFilter, setMovementTypeFilter] = useState<MovementTypeFilter>('all');
   const [movementContextFilter, setMovementContextFilter] = useState<MovementContextFilter>('all');
   const [movementCategoryFilter, setMovementCategoryFilter] = useState<MovementCategoryFilter>('all');
@@ -2428,6 +2433,46 @@ export function NorteApp() {
     [categoryState],
   );
 
+  const handlePreviewStatement = () => {
+    const preview = previewStatementCsv(statementCsv, movements);
+    setStatementPreview(preview);
+    if (preview.length === 0) showNotice('Não consegui ler o extrato', 'Use CSV com cabeçalhos Data, Descrição e Valor.');
+  };
+
+  const handleConfirmStatementImport = async () => {
+    const account = activeAccounts.find((item) => item.id === statementAccountId);
+    const items = statementPreview.filter((item) => !item.isDuplicate);
+    if (!account || items.length === 0) {
+      showNotice('Revise a importação', 'Escolha uma conta e mantenha ao menos um movimento novo.');
+      return;
+    }
+    const imported = items.map((item): Movement => ({
+      id: `import-${Date.now()}-${item.id}`,
+      title: item.title,
+      amount: item.amount,
+      type: item.type,
+      context: account.isBusiness ? 'Negocio' : 'Pessoal',
+      source: 'Manual',
+      createdAt: `${item.occurredAt}T12:00:00.000Z`,
+      account: account.name,
+      walletAccountId: account.id,
+      category: getSuggestedMerchantCategory(item.title, activeCategories.map((category) => category.name)) ?? 'Outros',
+    }));
+    setMovements((current) => [...imported, ...current]);
+    setAccountState((current) => imported.reduce((accounts, movement) => applyMovementToAccounts(accounts, movement), current));
+    setStatementPreview([]);
+    setStatementCsv('');
+    setShowStatementImport(false);
+    if (session && supabase) {
+      try {
+        await Promise.all(imported.map((movement) => createMovement(session, { title: movement.title, amount: movement.amount, type: movement.type, context: movement.context, source: movement.source, occurredAt: movement.createdAt, walletAccountId: movement.walletAccountId, category: movement.category })));
+        await refreshWorkspaceFromCloud();
+      } catch (error) {
+        showNotice('Extrato importado no app', error instanceof Error ? `Ainda não sincronizou: ${error.message}` : 'Ainda não sincronizou.');
+      }
+    }
+  };
+
   const categoryNames = useMemo(() => {
     const names = new Set(activeCategories.map((category) => category.name));
     movements.forEach((movement) => names.add(movement.category ?? 'Outros'));
@@ -3821,6 +3866,21 @@ export function NorteApp() {
 
           {activeTab === 'moves' && (
             <View style={styles.stack}>
+              <Card variant="soft">
+                <View style={styles.rowBetween}>
+                  <View><Text style={styles.cardTitle}>Importar extrato</Text><Text style={styles.mutedText}>CSV com revisão antes de entrar no histórico.</Text></View>
+                  <Pressable onPress={() => setShowStatementImport((value) => !value)}><Text style={styles.inlineLink}>{showStatementImport ? 'Fechar' : 'Importar CSV'}</Text></Pressable>
+                </View>
+                {showStatementImport ? <View style={styles.detailStack}>
+                  <TextInput value={statementCsv} onChangeText={setStatementCsv} multiline placeholder="Cole aqui: Data;Descrição;Valor" placeholderTextColor={palette.textMuted} style={[styles.field, styles.statementTextArea]} />
+                  <View style={styles.pillRow}>{activeAccounts.map((account) => <Pill key={account.id} label={account.name} selected={statementAccountId === account.id} onPress={() => setStatementAccountId(account.id)} />)}</View>
+                  <Pressable style={styles.secondaryButton} onPress={handlePreviewStatement}><Text style={styles.secondaryButtonText}>Revisar extrato</Text></Pressable>
+                  {statementPreview.length > 0 ? <View style={styles.detailStack}>
+                    {statementPreview.slice(0, 8).map((item) => <View key={item.id} style={styles.rowBetween}><View style={styles.flexOne}><Text style={styles.bodyText}>{item.title}</Text><Text style={styles.mutedText}>{item.occurredAt} {item.isDuplicate ? '/ possível duplicidade' : ''}</Text></View><Text style={item.type === 'income' ? styles.amountPositive : styles.amountNegative}>{item.type === 'income' ? '+' : '-'}{currency.format(item.amount)}</Text></View>)}
+                    <Pressable style={styles.primaryButtonCompact} onPress={() => void handleConfirmStatementImport()}><Text style={styles.primaryButtonText}>Importar {statementPreview.filter((item) => !item.isDuplicate).length} movimentos</Text></Pressable>
+                  </View> : null}
+                </View> : null}
+              </Card>
               <Card>
                 <View style={styles.rowBetween}>
                   <Text style={styles.cardTitle}>{editingMovementId ? 'Editar movimento' : 'Lancamento manual'}</Text>
@@ -6863,6 +6923,10 @@ function createStyles(palette: ThemePalette) {
     color: 'rgba(255,255,255,0.7)',
     fontSize: 12,
     fontWeight: '600',
+  },
+  statementTextArea: {
+    minHeight: 112,
+    textAlignVertical: 'top',
   },
   cashForecastEyebrow: {
     color: '#AAAAAA',
