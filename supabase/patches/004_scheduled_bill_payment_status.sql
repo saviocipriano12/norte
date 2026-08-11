@@ -7,3 +7,9 @@ alter table public.goals
 
 alter table public.transaction_drafts
   add column if not exists occurred_at date;
+
+alter table public.transaction_drafts
+  add column if not exists category text not null default 'Outros';
+
+alter table public.transactions
+  add column if not exists category text not null default 'Outros';

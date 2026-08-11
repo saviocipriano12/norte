@@ -8,6 +8,7 @@ import {
   type DraftEntry,
   type Message,
   type Movement,
+  type MovementCategory,
   type Goal,
   type UpcomingBill,
   type WalletCard,
@@ -50,6 +51,7 @@ type MovementInput = {
   walletAccountId?: string | null;
   cardId?: string | null;
   accountName?: string;
+  category?: MovementCategory;
 };
 
 type UserProfileInput = {
@@ -135,6 +137,7 @@ function movementRowToApp(
     occurred_at: string;
     wallet_account_id: string | null;
     card_id: string | null;
+    category?: string | null;
   },
   accountMap: Map<string, string>,
 ): Movement {
@@ -151,6 +154,7 @@ function movementRowToApp(
       resolveMovementAccount(movement.context as Movement['context']),
     walletAccountId: movement.wallet_account_id,
     cardId: movement.card_id,
+    category: (movement.category as MovementCategory | null) ?? 'Outros',
   };
 }
 
@@ -276,6 +280,7 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
       question: (draft.question as string | null) ?? undefined,
       note: draft.note as string,
       occurredAt: (draft.occurred_at as string | null) ?? undefined,
+      category: (draft.category as MovementCategory | null) ?? 'Outros',
       walletAccountId: null,
       cardId: null,
     })),
@@ -365,6 +370,7 @@ export async function persistAssistantTurn(
           question: draft.question ?? null,
           note: draft.note,
           occurred_at: draft.occurredAt ?? null,
+          category: draft.category ?? 'Outros',
           status: 'pending',
         })),
       )
@@ -383,6 +389,7 @@ export async function persistAssistantTurn(
       question: (draft.question as string | null) ?? undefined,
       note: draft.note as string,
       occurredAt: (draft.occurred_at as string | null) ?? undefined,
+      category: (draft.category as MovementCategory | null) ?? 'Outros',
     }));
   }
 
@@ -507,6 +514,7 @@ export async function persistConfirmedDrafts(session: Session, drafts: DraftEntr
       context: draft.context ?? 'Pessoal',
       source: 'IA',
       occurred_at: `${draft.occurredAt ?? new Date().toISOString().slice(0, 10)}T12:00:00.000Z`,
+      category: draft.category ?? 'Outros',
       draft_id: isUuid(draft.id) ? draft.id : null,
     });
 
@@ -820,6 +828,7 @@ export async function createMovement(session: Session, input: MovementInput) {
       context: input.context,
       source: input.source,
       occurred_at: input.occurredAt,
+      category: input.category ?? 'Outros',
     })
     .select('*')
     .single();
@@ -854,6 +863,7 @@ export async function createMovement(session: Session, input: MovementInput) {
       occurred_at: data.occurred_at as string,
       wallet_account_id: resolvedWalletAccountId,
       card_id: (data.card_id as string | null) ?? null,
+      category: (data.category as string | null) ?? 'Outros',
     },
     new Map(resolvedWalletAccountId ? [[resolvedWalletAccountId, accountName]] : []),
   );
@@ -885,6 +895,7 @@ export async function updateMovement(session: Session, movementId: string, input
       type: input.type,
       context: input.context,
       occurred_at: input.occurredAt,
+      category: input.category ?? 'Outros',
     })
     .eq('user_id', session.user.id)
     .eq('id', movementId)
@@ -926,6 +937,7 @@ export async function updateMovement(session: Session, movementId: string, input
       occurred_at: data.occurred_at as string,
       wallet_account_id: resolvedWalletAccountId,
       card_id: (data.card_id as string | null) ?? null,
+      category: (data.category as string | null) ?? 'Outros',
     },
     accountMap,
   );

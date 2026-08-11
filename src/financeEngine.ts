@@ -1,4 +1,4 @@
-import type { Account, DraftEntry, EntryContext, Movement } from './mockData';
+import type { Account, DraftEntry, EntryContext, Movement, MovementCategory } from './mockData';
 
 const expenseVerbs = ['gastei', 'paguei', 'comprei', 'usei', 'debitei', 'passei'];
 const incomeVerbs = ['recebi', 'ganhei', 'entrou', 'caiu', 'vendi', 'me pagaram'];
@@ -187,6 +187,22 @@ function inferContext(segment: string, title: string, type: 'income' | 'expense'
   };
 }
 
+export function inferMovementCategory(segment: string, type: 'income' | 'expense'): MovementCategory {
+  const normalized = normalizeText(segment);
+  if (/mercado|padaria|cafe|almoco|janta|lanche|ifood|restaurante/.test(normalized)) return 'Alimentacao';
+  if (/aluguel|condominio|casa|apartamento|energia|luz|agua/.test(normalized)) return 'Moradia';
+  if (/uber|99|gasolina|combustivel|onibus|metro|estacionamento/.test(normalized)) return 'Transporte';
+  if (/netflix|spotify|streaming|assinatura/.test(normalized)) return 'Assinaturas';
+  if (/farmacia|medico|consulta|academia|terapia/.test(normalized)) return 'Saude';
+  if (/curso|faculdade|livro|escola/.test(normalized)) return 'Educacao';
+  if (/cinema|viagem|show|jogo/.test(normalized)) return 'Lazer';
+  if (/das|imposto|tributo|mei/.test(normalized)) return 'Impostos';
+  if (type === 'income' && /venda|produto/.test(normalized)) return 'Vendas';
+  if (type === 'income' || /cliente|projeto|freela|servico|software|marketing|fornecedor/.test(normalized)) return 'Servicos';
+  if (/notebook|computador|material|anuncio/.test(normalized)) return 'Trabalho';
+  return 'Outros';
+}
+
 function buildNote(type: 'income' | 'expense', hasQuestion: boolean) {
   if (type === 'income') {
     return hasQuestion ? 'Entrada identificada, aguardando contexto.' : 'Entrada pronta para confirmacao.';
@@ -261,6 +277,7 @@ export function parseFinanceMessage(input: string) {
       question: contextInfo.question,
       note: buildNote(type, Boolean(contextInfo.question)),
       occurredAt: inferOccurrenceDate(segment),
+      category: inferMovementCategory(segment, type),
     });
   });
 
@@ -355,5 +372,6 @@ export function buildMovementFromDraft(draft: DraftEntry): Movement {
     account: resolveMovementAccount(draft.context ?? 'Pessoal'),
     walletAccountId: draft.walletAccountId ?? null,
     cardId: draft.cardId ?? null,
+    category: draft.category ?? 'Outros',
   };
 }

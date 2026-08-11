@@ -14,6 +14,7 @@ const norteDraftSchema = z.object({
   question: z.string().nullable(),
   note: z.string().min(1),
   occurredAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  category: z.enum(['Alimentacao', 'Moradia', 'Transporte', 'Assinaturas', 'Saude', 'Educacao', 'Lazer', 'Trabalho', 'Impostos', 'Vendas', 'Servicos', 'Outros']).nullable(),
 });
 
 const norteResponseSchema = z.object({
@@ -34,7 +35,7 @@ function serializeMovements(movements: AssistantTurnRequest['movements']) {
     .slice(0, 12)
     .map(
       (movement) =>
-        `${movement.type === 'income' ? 'Receita' : 'Despesa'} | ${movement.title} | ${movement.amount} | ${movement.context} | ${movement.source}`,
+        `${movement.type === 'income' ? 'Receita' : 'Despesa'} | ${movement.title} | ${movement.amount} | ${movement.context} | ${movement.category ?? 'Outros'} | ${movement.source}`,
     )
     .join('\n');
 }
@@ -44,7 +45,7 @@ function serializeDrafts(drafts: AssistantTurnRequest['drafts']) {
     .slice(0, 12)
     .map(
       (draft) =>
-        `${draft.type === 'income' ? 'Receita' : 'Despesa'} | ${draft.title} | ${draft.amount} | ${draft.context ?? 'Sem contexto'} | ${draft.question ?? 'Sem pergunta'}`,
+        `${draft.type === 'income' ? 'Receita' : 'Despesa'} | ${draft.title} | ${draft.amount} | ${draft.context ?? 'Sem contexto'} | ${draft.category ?? 'Outros'} | ${draft.question ?? 'Sem pergunta'}`,
     )
     .join('\n');
 }
@@ -87,6 +88,7 @@ function normalizeDrafts(drafts: Array<z.infer<typeof norteDraftSchema>>): Draft
               : 'Esse gasto foi pessoal, do negocio ou compartilhado?',
         note: draft.note.trim() || 'Movimento identificado, aguardando sua revisao.',
         occurredAt: draft.occurredAt ?? undefined,
+        category: draft.category ?? 'Outros',
       } satisfies DraftEntry;
     });
 }

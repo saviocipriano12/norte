@@ -1,4 +1,19 @@
 export type EntryContext = 'Pessoal' | 'Negocio' | 'Compartilhado';
+export const movementCategories = [
+  'Alimentacao',
+  'Moradia',
+  'Transporte',
+  'Assinaturas',
+  'Saude',
+  'Educacao',
+  'Lazer',
+  'Trabalho',
+  'Impostos',
+  'Vendas',
+  'Servicos',
+  'Outros',
+] as const;
+export type MovementCategory = (typeof movementCategories)[number];
 export type AppTab = 'home' | 'assistant' | 'moves' | 'wallet' | 'plan';
 export type OrbMode = 'idle' | 'listening' | 'thinking' | 'responding';
 
@@ -16,6 +31,7 @@ export type DraftEntry = {
   context?: EntryContext;
   question?: string;
   note: string;
+  category?: MovementCategory;
   occurredAt?: string;
   walletAccountId?: string | null;
   cardId?: string | null;
@@ -30,6 +46,7 @@ export type Movement = {
   source: 'IA' | 'Manual';
   createdAt: string;
   account: string;
+  category?: MovementCategory;
   walletAccountId?: string | null;
   cardId?: string | null;
 };

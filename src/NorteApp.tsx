@@ -58,6 +58,8 @@ import {
   type Goal,
   type Message,
   type Movement,
+  movementCategories,
+  type MovementCategory,
   type OrbMode,
   type UpcomingBill,
   type WalletCard,
@@ -111,6 +113,7 @@ type ManualEntryState = {
   date: string;
   type: 'income' | 'expense';
   context: EntryContext;
+  category: MovementCategory;
   accountId: string;
   cardId: string;
 };
@@ -147,6 +150,7 @@ type BillFormState = {
 
 type MovementTypeFilter = 'all' | 'income' | 'expense';
 type MovementContextFilter = 'all' | EntryContext;
+type MovementCategoryFilter = 'all' | MovementCategory;
 type MovementPeriodFilter = 'all' | 'today' | 'week' | 'month';
 type MovementSort = 'newest' | 'oldest' | 'highest' | 'lowest';
 type FinancialHealth = 'starting' | 'healthy' | 'stable' | 'attention' | 'critical';
@@ -216,6 +220,7 @@ const defaultManualEntry: ManualEntryState = {
   date: new Date().toISOString().slice(0, 10),
   type: 'expense',
   context: 'Pessoal',
+  category: 'Outros',
   accountId: '',
   cardId: '',
 };
@@ -506,6 +511,7 @@ export function NorteApp() {
   const [editingBillId, setEditingBillId] = useState<string | null>(null);
   const [movementTypeFilter, setMovementTypeFilter] = useState<MovementTypeFilter>('all');
   const [movementContextFilter, setMovementContextFilter] = useState<MovementContextFilter>('all');
+  const [movementCategoryFilter, setMovementCategoryFilter] = useState<MovementCategoryFilter>('all');
   const [movementPeriodFilter, setMovementPeriodFilter] = useState<MovementPeriodFilter>('all');
   const [movementAccountFilter, setMovementAccountFilter] = useState('all');
   const [movementSort, setMovementSort] = useState<MovementSort>('newest');
@@ -874,12 +880,13 @@ export function NorteApp() {
             matchesSearch &&
             (movementTypeFilter === 'all' || movement.type === movementTypeFilter) &&
             (movementContextFilter === 'all' || movement.context === movementContextFilter) &&
+            (movementCategoryFilter === 'all' || (movement.category ?? 'Outros') === movementCategoryFilter) &&
             (movementAccountFilter === 'all' || movement.walletAccountId === movementAccountFilter) &&
             isMovementInPeriod(movement.createdAt, movementPeriodFilter)
           );
         },
       ),
-    [movementAccountFilter, movementContextFilter, movementPeriodFilter, movementSearch, movementTypeFilter, sortedMovements],
+    [movementAccountFilter, movementCategoryFilter, movementContextFilter, movementPeriodFilter, movementSearch, movementTypeFilter, sortedMovements],
   );
   const visibleMovementTotal = visibleMovements.reduce(
     (total, movement) => total + (movement.type === 'income' ? movement.amount : -movement.amount),
@@ -2130,6 +2137,7 @@ export function NorteApp() {
       amount,
       type: manualEntry.type,
       context: manualEntry.context,
+      category: manualEntry.category,
       source: 'Manual',
       createdAt: buildMovementTimestamp(entryDate, previousMovement?.createdAt),
       account: manualEntryAccount.name,
@@ -2166,6 +2174,7 @@ export function NorteApp() {
               amount: movement.amount,
               type: movement.type,
               context: movement.context,
+              category: movement.category,
               source: movement.source,
               occurredAt: movement.createdAt,
               walletAccountId: movement.walletAccountId,
@@ -2177,6 +2186,7 @@ export function NorteApp() {
               amount: movement.amount,
               type: movement.type,
               context: movement.context,
+              category: movement.category,
               source: movement.source,
               occurredAt: movement.createdAt,
               walletAccountId: movement.walletAccountId,
@@ -2209,6 +2219,7 @@ export function NorteApp() {
       date: movement.createdAt.slice(0, 10),
       type: movement.type,
       context: movement.context,
+      category: movement.category ?? 'Outros',
       accountId:
         activeAccounts.find((account) => account.id === movement.walletAccountId)?.id ??
         activeAccounts.find((account) => account.name === movement.account)?.id ??
@@ -2783,6 +2794,7 @@ export function NorteApp() {
     setEditingBillId(null);
     setMovementTypeFilter('all');
     setMovementContextFilter('all');
+    setMovementCategoryFilter('all');
     setMovementPeriodFilter('all');
     setMovementAccountFilter('all');
     setMovementSort('newest');
@@ -3408,6 +3420,19 @@ export function NorteApp() {
                       />
                     </View>
                     <View style={styles.selectionBlock}>
+                      <Text style={styles.mutedText}>Categoria</Text>
+                      <View style={styles.pillRow}>
+                        {movementCategories.map((category) => (
+                          <Pill
+                            key={category}
+                            label={category}
+                            selected={manualEntry.category === category}
+                            onPress={() => setManualEntry((current) => ({ ...current, category }))}
+                          />
+                        ))}
+                      </View>
+                    </View>
+                    <View style={styles.selectionBlock}>
                       <Text style={styles.mutedText}>Conta</Text>
                       <View style={styles.pillRow}>
                         {activeAccounts.map((account) => (
@@ -3474,6 +3499,22 @@ export function NorteApp() {
                   <Pill label="Pessoal" selected={movementContextFilter === 'Pessoal'} onPress={() => setMovementContextFilter('Pessoal')} />
                   <Pill label="Negocio" selected={movementContextFilter === 'Negocio'} onPress={() => setMovementContextFilter('Negocio')} />
                   <Pill label="Compartilhado" selected={movementContextFilter === 'Compartilhado'} onPress={() => setMovementContextFilter('Compartilhado')} />
+                </View>
+                <View style={styles.selectionBlock}>
+                  <Text style={styles.mutedText}>Categoria</Text>
+                  <View style={styles.pillRow}>
+                    <Pill label="Todas" selected={movementCategoryFilter === 'all'} onPress={() => setMovementCategoryFilter('all')} />
+                    {movementCategories
+                      .filter((category) => movements.some((movement) => (movement.category ?? 'Outros') === category))
+                      .map((category) => (
+                        <Pill
+                          key={category}
+                          label={category}
+                          selected={movementCategoryFilter === category}
+                          onPress={() => setMovementCategoryFilter(category)}
+                        />
+                      ))}
+                  </View>
                 </View>
                 <View style={styles.pillRow}>
                   <Pill label="Todo periodo" selected={movementPeriodFilter === 'all'} onPress={() => setMovementPeriodFilter('all')} />
@@ -4646,6 +4687,9 @@ function DraftCard({
         </Text>
       </View>
       {draft.question ? <Text style={styles.bodyText}>{draft.question}</Text> : null}
+      <View style={styles.tag}>
+        <Text style={styles.tagText}>{draft.category ?? 'Outros'}</Text>
+      </View>
       <View style={styles.pillRow}>
         <Pill label="Pessoal" selected={draft.context === 'Pessoal'} onPress={() => onSelectContext('Pessoal')} />
         <Pill label="Negocio" selected={draft.context === 'Negocio'} onPress={() => onSelectContext('Negocio')} />
@@ -4711,8 +4755,13 @@ function MovementRow({
           {currency.format(movement.amount)}
         </Text>
       </View>
-      <View style={styles.tag}>
-        <Text style={styles.tagText}>{movement.context}</Text>
+      <View style={styles.pillRow}>
+        <View style={styles.tag}>
+          <Text style={styles.tagText}>{movement.context}</Text>
+        </View>
+        <View style={styles.tag}>
+          <Text style={styles.tagText}>{movement.category ?? 'Outros'}</Text>
+        </View>
       </View>
       <View style={styles.inlineActions}>
         <Pressable onPress={onEdit}>
