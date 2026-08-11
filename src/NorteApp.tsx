@@ -1108,6 +1108,11 @@ export function NorteApp() {
     },
   ];
 
+  const highestCardUsage = cardState
+    .filter((card) => card.limit > 0)
+    .map((card) => ({ card, percentage: card.used / card.limit }))
+    .sort((left, right) => right.percentage - left.percentage)[0];
+
   const northGuidance =
     !hasFinancialData
       ? {
@@ -1123,6 +1128,13 @@ export function NorteApp() {
           description: `Faltam ${pendingQuestions} resposta${pendingQuestions > 1 ? 's' : ''} para o Norte atualizar seus saldos com seguranca.`,
           icon: 'help-circle-outline' as keyof typeof Ionicons.glyphMap,
         }
+      : highestCardUsage && highestCardUsage.percentage >= 0.8
+        ? {
+            eyebrow: 'Atenção ao cartão',
+            title: `${highestCardUsage.card.name} está em ${Math.round(highestCardUsage.percentage * 100)}% do limite`,
+            description: `A fatura atual é ${currency.format(highestCardUsage.card.used)} e vence dia ${highestCardUsage.card.dueDay ?? 15}. Vale revisar antes de fazer novas compras no crédito.`,
+            icon: 'card-outline' as keyof typeof Ionicons.glyphMap,
+          }
       : spendableToday <= 0
         ? {
             eyebrow: 'Atencao ao caixa',
