@@ -1054,6 +1054,13 @@ export function NorteApp() {
     const overdueOutflows = pendingBills
       .filter((bill) => isBillOverdue(bill.due))
       .reduce((total, bill) => total + bill.amount * personalContextWeight(bill.context), 0);
+    const cardInvoiceOutflows = cardState
+      .filter((card) => !card.isBusiness && card.used > 0)
+      .map((card) => {
+        const due = new Date(now.getFullYear(), now.getMonth(), card.dueDay ?? 15, 12);
+        if (due < now) due.setMonth(due.getMonth() + 1);
+        return { due: due.toISOString().slice(0, 10), amount: card.used };
+      });
 
     return buildCashForecast({
       today,
@@ -1062,9 +1069,10 @@ export function NorteApp() {
       immediateOutflows: pendingPersonalExpense + overdueOutflows,
       datedOutflows: pendingBills
         .filter((bill) => !isBillOverdue(bill.due))
-        .map((bill) => ({ due: bill.due, amount: bill.amount * personalContextWeight(bill.context) })),
+        .map((bill) => ({ due: bill.due, amount: bill.amount * personalContextWeight(bill.context) }))
+        .concat(cardInvoiceOutflows),
     });
-  }, [forecastMode, movements, pendingBills, pendingPersonalExpense, personalBalance]);
+  }, [cardState, forecastMode, movements, pendingBills, pendingPersonalExpense, personalBalance]);
   const hasFinancialData =
     movements.length > 0 || drafts.length > 0 || billState.length > 0 || accountState.some((account) => account.balance !== 0);
   const financialHealth: FinancialHealth =
