@@ -972,7 +972,7 @@ export function NorteApp() {
     },
     {
       label: 'Contas vencendo',
-      value: `${billState.length}`,
+      value: `${pendingBills.length}`,
       detail: `${currency.format(upcomingBillsTotal)} previstos nas proximas cobrancas.`,
     },
     {
@@ -1744,7 +1744,7 @@ export function NorteApp() {
           businessBalance,
           spendableToday,
           upcomingBillsTotal,
-          upcomingBillsCount: billState.length,
+          upcomingBillsCount: pendingBills.length,
           overdueBillsCount: overdueBills.length,
           categorySpending,
         },
@@ -3117,6 +3117,19 @@ export function NorteApp() {
                   </Pressable>
                 </View>
                 <CategorySpendingList items={categorySpending} />
+              </Card>
+
+              <Card variant="soft">
+                <View style={styles.rowBetween}>
+                  <View>
+                    <Text style={styles.cardTitle}>Proximos vencimentos</Text>
+                    <Text style={styles.mutedText}>O que ainda precisa de atencao</Text>
+                  </View>
+                  <Pressable onPress={() => setActiveTab('plan')}>
+                    <Text style={styles.inlineLink}>Ver agenda</Text>
+                  </Pressable>
+                </View>
+                <UpcomingBillsList bills={pendingBills} />
               </Card>
 
               <Card variant="soft">
@@ -4721,6 +4734,39 @@ function CategorySpendingList({
   );
 }
 
+function UpcomingBillsList({ bills }: { bills: UpcomingBill[] }) {
+  const nextBills = [...bills].sort((left, right) => left.due.localeCompare(right.due)).slice(0, 3);
+
+  if (nextBills.length === 0) {
+    return (
+      <View style={styles.emptyState}>
+        <Ionicons name="calendar-outline" size={22} color={palette.textMuted} />
+        <Text style={styles.bodyText}>Nenhuma conta pendente por enquanto.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.upcomingBillsList}>
+      {nextBills.map((bill) => {
+        const overdue = isBillOverdue(bill.due);
+        return (
+          <View key={bill.id} style={styles.upcomingBillRow}>
+            <View style={[styles.upcomingBillIcon, overdue && styles.upcomingBillIconOverdue]}>
+              <Ionicons name={overdue ? 'alert-circle-outline' : 'calendar-outline'} size={17} color={overdue ? palette.danger : palette.text} />
+            </View>
+            <View style={styles.flexOne}>
+              <Text style={styles.bodyText}>{bill.title}</Text>
+              <Text style={styles.mutedText}>{overdue ? 'Vencida' : `Vence ${formatBillDue(bill.due)}`} / {bill.context}</Text>
+            </View>
+            <Text style={overdue ? styles.amountNegative : styles.categorySpendingValue}>{currency.format(bill.amount)}</Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 function ModeButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={[styles.modeButton, active && styles.modeButtonActive]}>
@@ -6085,6 +6131,27 @@ function createStyles(palette: ThemePalette) {
   categorySpendingFill: {
     height: '100%',
     borderRadius: radius.pill,
+  },
+  upcomingBillsList: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  upcomingBillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    minHeight: 44,
+  },
+  upcomingBillIcon: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+    backgroundColor: palette.backgroundSoft,
+  },
+  upcomingBillIconOverdue: {
+    backgroundColor: palette.id === 'dark' ? '#3A1A1A' : '#FEE2E2',
   },
   drawerBackdrop: {
     flex: 1,
