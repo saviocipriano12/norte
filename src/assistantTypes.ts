@@ -15,6 +15,9 @@ export type AssistantFinancialContext = {
     amount: number;
     movementCount: number;
   }>;
+  forecastEndBalance: number;
+  forecastLowestBalance: number;
+  forecastRiskDate: string | null;
 };
 
 export type AssistantTurnRequest = {

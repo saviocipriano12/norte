@@ -20,6 +20,7 @@ import type { AssistantTurnResponse } from './assistantTypes';
 import { AuthScreen } from './AuthScreen';
 import {
   applyMovementToAccounts,
+  buildCashForecast,
   buildMovementFromDraft,
   formatMovementDate,
   movementBusinessWeight,
@@ -154,6 +155,7 @@ type MovementContextFilter = 'all' | EntryContext;
 type MovementCategoryFilter = 'all' | MovementCategory;
 type MovementPeriodFilter = 'all' | 'today' | 'week' | 'month';
 type MovementSort = 'newest' | 'oldest' | 'highest' | 'lowest';
+type ForecastMode = 'normal' | 'conservative';
 type FinancialHealth = 'starting' | 'healthy' | 'stable' | 'attention' | 'critical';
 type PendingMovementDeletion = {
   movement: Movement;
@@ -531,6 +533,7 @@ export function NorteApp() {
   const [movementPeriodFilter, setMovementPeriodFilter] = useState<MovementPeriodFilter>('all');
   const [movementAccountFilter, setMovementAccountFilter] = useState('all');
   const [movementSort, setMovementSort] = useState<MovementSort>('newest');
+  const [forecastMode, setForecastMode] = useState<ForecastMode>('normal');
   const [movementSearch, setMovementSearch] = useState('');
   const [pendingMovementDeletion, setPendingMovementDeletion] = useState<PendingMovementDeletion | null>(null);
   const [isSavingManualEntry, setIsSavingManualEntry] = useState(false);
@@ -970,6 +973,32 @@ export function NorteApp() {
     .filter((movement) => movement.type === 'expense' && isMovementInPeriod(movement.createdAt, 'month'))
     .reduce((total, movement) => total + movement.amount, 0);
   const monthResult = monthIncome - monthExpense;
+  const cashForecast = useMemo(() => {
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const daysElapsed = Math.max(now.getDate(), 1);
+    const personalMonthlyIncome = movements
+      .filter((movement) => movement.type === 'income' && isMovementInPeriod(movement.createdAt, 'month'))
+      .reduce((total, movement) => total + movement.amount * personalContextWeight(movement.context), 0);
+    const personalMonthlyExpense = movements
+      .filter((movement) => movement.type === 'expense' && isMovementInPeriod(movement.createdAt, 'month'))
+      .reduce((total, movement) => total + movement.amount * personalContextWeight(movement.context), 0);
+    const incomeFactor = forecastMode === 'conservative' ? 0.75 : 1;
+    const expenseFactor = forecastMode === 'conservative' ? 1.1 : 1;
+    const overdueOutflows = pendingBills
+      .filter((bill) => isBillOverdue(bill.due))
+      .reduce((total, bill) => total + bill.amount * personalContextWeight(bill.context), 0);
+
+    return buildCashForecast({
+      today,
+      startingBalance: personalBalance,
+      dailyNet: (personalMonthlyIncome * incomeFactor - personalMonthlyExpense * expenseFactor) / daysElapsed,
+      immediateOutflows: pendingPersonalExpense + overdueOutflows,
+      datedOutflows: pendingBills
+        .filter((bill) => !isBillOverdue(bill.due))
+        .map((bill) => ({ due: bill.due, amount: bill.amount * personalContextWeight(bill.context) })),
+    });
+  }, [forecastMode, movements, pendingBills, pendingPersonalExpense, personalBalance]);
   const hasFinancialData =
     movements.length > 0 || drafts.length > 0 || billState.length > 0 || accountState.some((account) => account.balance !== 0);
   const financialHealth: FinancialHealth =
@@ -1825,6 +1854,9 @@ export function NorteApp() {
           upcomingBillsCount: pendingBills.length,
           overdueBillsCount: overdueBills.length,
           categorySpending,
+          forecastEndBalance: cashForecast.projectedEndBalance,
+          forecastLowestBalance: cashForecast.lowestBalance,
+          forecastRiskDate: cashForecast.riskDate,
         },
       }, session?.access_token);
 
@@ -3196,6 +3228,8 @@ export function NorteApp() {
                 onPress={() => setActiveTab(pendingQuestions > 0 ? 'assistant' : 'moves')}
               />
 
+              <CashForecastCard forecast={cashForecast} mode={forecastMode} onChangeMode={setForecastMode} />
+
               <Card variant="soft">
                 <View style={styles.rowBetween}>
                   <View>
@@ -4565,6 +4599,59 @@ function GuidanceCard({
       </View>
       <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />
     </Pressable>
+  );
+}
+
+function CashForecastCard({
+  forecast,
+  mode,
+  onChangeMode,
+}: {
+  forecast: ReturnType<typeof buildCashForecast>;
+  mode: ForecastMode;
+  onChangeMode: (mode: ForecastMode) => void;
+}) {
+  const hasRisk = Boolean(forecast.riskDate);
+
+  return (
+    <View style={styles.cashForecastCard}>
+      <View style={styles.rowBetween}>
+        <View>
+          <Text style={styles.cashForecastEyebrow}>Previsao de caixa</Text>
+          <Text style={styles.cashForecastTitle}>Proximos 30 dias</Text>
+        </View>
+        <Ionicons name="analytics-outline" size={20} color="#FFFFFF" />
+      </View>
+      <View style={styles.forecastModeRow}>
+        <Pressable
+          style={[styles.forecastModeButton, mode === 'normal' && styles.forecastModeButtonActive]}
+          onPress={() => onChangeMode('normal')}
+        >
+          <Text style={[styles.forecastModeText, mode === 'normal' && styles.forecastModeTextActive]}>Ritmo atual</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.forecastModeButton, mode === 'conservative' && styles.forecastModeButtonActive]}
+          onPress={() => onChangeMode('conservative')}
+        >
+          <Text style={[styles.forecastModeText, mode === 'conservative' && styles.forecastModeTextActive]}>Conservador</Text>
+        </Pressable>
+      </View>
+      <View style={styles.forecastMetricRow}>
+        <View style={styles.flexOne}>
+          <Text style={styles.cashForecastLabel}>Saldo projetado</Text>
+          <Text style={hasRisk ? styles.cashForecastRiskValue : styles.cashForecastValue}>{currency.format(forecast.projectedEndBalance)}</Text>
+        </View>
+        <View style={styles.flexOne}>
+          <Text style={styles.cashForecastLabel}>Contas no periodo</Text>
+          <Text style={styles.cashForecastValue}>{currency.format(forecast.scheduledOutflows)}</Text>
+        </View>
+      </View>
+      <Text style={styles.cashForecastMessage}>
+        {hasRisk
+          ? `Atencao: o caixa pode ficar negativo em ${formatBillDue(forecast.riskDate!)}. O menor saldo projetado e ${currency.format(forecast.lowestBalance)}.`
+          : `Seu menor saldo projetado e ${currency.format(forecast.lowestBalance)}. O cenario considera contas agendadas e seu ritmo atual.`}
+      </Text>
+    </View>
   );
 }
 
@@ -6346,6 +6433,67 @@ function createStyles(palette: ThemePalette) {
     height: '100%',
     borderRadius: radius.pill,
     backgroundColor: palette.text,
+  },
+  cashForecastCard: {
+    gap: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: '#111111',
+  },
+  cashForecastEyebrow: {
+    color: '#AAAAAA',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  cashForecastTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  forecastModeRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  forecastModeButton: {
+    minHeight: 32,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.pill,
+    backgroundColor: '#252525',
+  },
+  forecastModeButtonActive: {
+    backgroundColor: '#FFFFFF',
+  },
+  forecastModeText: {
+    color: '#C9C9C9',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  forecastModeTextActive: {
+    color: '#111111',
+  },
+  forecastMetricRow: {
+    flexDirection: 'row',
+    gap: spacing.lg,
+  },
+  cashForecastLabel: {
+    color: '#AAAAAA',
+    fontSize: 12,
+  },
+  cashForecastValue: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  cashForecastRiskValue: {
+    color: '#FFD1D1',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  cashForecastMessage: {
+    color: '#D1D1D1',
+    fontSize: 13,
+    lineHeight: 19,
   },
   categorySpendingList: {
     gap: spacing.md,

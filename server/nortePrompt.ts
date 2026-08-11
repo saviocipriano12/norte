@@ -27,6 +27,7 @@ Regras financeiras:
 - se contexto estiver definido, question deve ser nula
 - nunca invente valores, datas, contas, clientes ou categorias
 - quando responder sobre gastos por categoria, use exclusivamente o resumo calculado pelo app e deixe claro quando houver pouco historico
+- quando a pessoa perguntar sobre futuro, caixa ou quanto pode gastar, use a previsao calculada pelo app e explique a principal premissa em uma frase
 
 Formato:
 - assistantMessage: mensagem natural para o usuario

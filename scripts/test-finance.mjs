@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { applyMovementToAccounts, inferMovementCategory, inferOccurrenceDate, parseCurrencyInput, parseDraftCorrectionAmount, parseDraftCorrectionDate, parseFinanceMessage } from '../src/financeEngine.ts';
+import { applyMovementToAccounts, buildCashForecast, inferMovementCategory, inferOccurrenceDate, parseCurrencyInput, parseDraftCorrectionAmount, parseDraftCorrectionDate, parseFinanceMessage } from '../src/financeEngine.ts';
 import { initialAccounts } from '../src/mockData.ts';
 
 const result = parseFinanceMessage('gastei R$ 40,50 na padaria e recebi 1.250,75 do cliente');
@@ -19,6 +19,17 @@ assert.equal(inferOccurrenceDate('paguei na sexta', new Date('2026-08-11T12:00:0
 assert.equal(parseDraftCorrectionDate('na verdade foi ontem', new Date('2026-08-11T12:00:00Z')), '2026-08-10');
 assert.equal(inferMovementCategory('gastei no mercado', 'expense'), 'Alimentacao');
 assert.equal(inferMovementCategory('recebi do cliente pelo projeto', 'income'), 'Servicos');
+
+const forecast = buildCashForecast({
+  today: '2026-08-11',
+  startingBalance: 1000,
+  dailyNet: 20,
+  immediateOutflows: 100,
+  datedOutflows: [{ due: '2026-08-14', amount: 1100 }],
+  horizonDays: 5,
+});
+assert.equal(forecast.riskDate, '2026-08-14');
+assert.equal(forecast.lowestBalance, -140);
 
 const expense = {
   id: 'test-expense',

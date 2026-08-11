@@ -127,6 +127,9 @@ const assistantTurnRequestSchema = z.object({
           movementCount: z.number().int().min(0),
         }),
       ),
+      forecastEndBalance: z.number(),
+      forecastLowestBalance: z.number(),
+      forecastRiskDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
     })
     .optional(),
 });

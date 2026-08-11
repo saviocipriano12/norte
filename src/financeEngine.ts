@@ -1,5 +1,58 @@
 import type { Account, DraftEntry, EntryContext, Movement, MovementCategory } from './mockData';
 
+export type CashForecast = {
+  projectedEndBalance: number;
+  lowestBalance: number;
+  riskDate: string | null;
+  scheduledOutflows: number;
+};
+
+export function buildCashForecast(input: {
+  today: string;
+  startingBalance: number;
+  dailyNet: number;
+  immediateOutflows: number;
+  datedOutflows: Array<{ due: string; amount: number }>;
+  horizonDays?: number;
+}): CashForecast {
+  const horizonDays = input.horizonDays ?? 30;
+  const start = new Date(`${input.today}T12:00:00`);
+  let balance = input.startingBalance - input.immediateOutflows;
+  let lowestBalance = balance;
+  let riskDate: string | null = balance < 0 ? input.today : null;
+  const datedOutflows = new Map<string, number>();
+
+  input.datedOutflows.forEach((item) => {
+    const current = datedOutflows.get(item.due) ?? 0;
+    datedOutflows.set(item.due, current + item.amount);
+  });
+
+  for (let offset = 0; offset <= horizonDays; offset += 1) {
+    const current = new Date(start);
+    current.setDate(start.getDate() + offset);
+    const date = current.toISOString().slice(0, 10);
+
+    if (offset > 0) {
+      balance += input.dailyNet;
+    }
+    balance -= datedOutflows.get(date) ?? 0;
+
+    if (balance < lowestBalance) {
+      lowestBalance = balance;
+    }
+    if (!riskDate && balance < 0) {
+      riskDate = date;
+    }
+  }
+
+  return {
+    projectedEndBalance: balance,
+    lowestBalance,
+    riskDate,
+    scheduledOutflows: input.datedOutflows.reduce((total, item) => total + item.amount, 0),
+  };
+}
+
 const expenseVerbs = ['gastei', 'paguei', 'comprei', 'usei', 'debitei', 'passei'];
 const incomeVerbs = ['recebi', 'ganhei', 'entrou', 'caiu', 'vendi', 'me pagaram'];
 const businessHints = [
