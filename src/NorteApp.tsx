@@ -944,6 +944,13 @@ export function NorteApp() {
       .map(([category, totals]) => ({ category, ...totals }))
       .sort((left, right) => right.amount - left.amount);
   }, [movements]);
+  const monthIncome = movements
+    .filter((movement) => movement.type === 'income' && isMovementInPeriod(movement.createdAt, 'month'))
+    .reduce((total, movement) => total + movement.amount, 0);
+  const monthExpense = movements
+    .filter((movement) => movement.type === 'expense' && isMovementInPeriod(movement.createdAt, 'month'))
+    .reduce((total, movement) => total + movement.amount, 0);
+  const monthResult = monthIncome - monthExpense;
   const hasFinancialData =
     movements.length > 0 || drafts.length > 0 || billState.length > 0 || accountState.some((account) => account.balance !== 0);
   const financialHealth: FinancialHealth =
@@ -3119,6 +3126,10 @@ export function NorteApp() {
                 spendableToday={currency.format(spendableToday)}
                 healthLabel={healthPresentation.label}
                 healthColor={healthPresentation.color}
+                monthIncome={currency.format(monthIncome)}
+                monthExpense={currency.format(monthExpense)}
+                monthResult={currency.format(Math.abs(monthResult))}
+                monthResultPositive={monthResult >= 0}
                 onOpenWallet={() => setActiveTab('wallet')}
                 onOpenMoves={() => setActiveTab('moves')}
                 onOpenPlan={() => setActiveTab('plan')}
@@ -4392,6 +4403,10 @@ function BalanceSpotlightCard({
   spendableToday,
   healthLabel,
   healthColor,
+  monthIncome,
+  monthExpense,
+  monthResult,
+  monthResultPositive,
   onOpenWallet,
   onOpenMoves,
   onOpenPlan,
@@ -4403,6 +4418,10 @@ function BalanceSpotlightCard({
   spendableToday: string;
   healthLabel: string;
   healthColor: string;
+  monthIncome: string;
+  monthExpense: string;
+  monthResult: string;
+  monthResultPositive: boolean;
   onOpenWallet: () => void;
   onOpenMoves: () => void;
   onOpenPlan: () => void;
@@ -4429,6 +4448,22 @@ function BalanceSpotlightCard({
       <View style={styles.balanceSpendablePill}>
         <Text style={styles.balanceSpendableLabel}>Disponivel para gastar hoje</Text>
         <Text style={styles.balanceSpendableValue}>{spendableToday}</Text>
+      </View>
+      <View style={styles.monthSummaryRow}>
+        <View style={styles.monthSummaryItem}>
+          <Text style={styles.monthSummaryLabel}>Entradas no mes</Text>
+          <Text style={styles.monthSummaryPositive}>+{monthIncome}</Text>
+        </View>
+        <View style={styles.monthSummaryItem}>
+          <Text style={styles.monthSummaryLabel}>Saidas no mes</Text>
+          <Text style={styles.monthSummaryNegative}>-{monthExpense}</Text>
+        </View>
+        <View style={styles.monthSummaryItem}>
+          <Text style={styles.monthSummaryLabel}>Resultado</Text>
+          <Text style={monthResultPositive ? styles.monthSummaryPositive : styles.monthSummaryNegative}>
+            {monthResultPositive ? '+' : '-'}{monthResult}
+          </Text>
+        </View>
       </View>
       <View style={styles.balanceActions}>
         <QuickAction icon="wallet-outline" label="Carteira" onPress={onOpenWallet} />
@@ -6223,6 +6258,29 @@ function createStyles(palette: ThemePalette) {
   categorySpendingFill: {
     height: '100%',
     borderRadius: radius.pill,
+  },
+  monthSummaryRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  monthSummaryItem: {
+    flex: 1,
+    gap: 4,
+  },
+  monthSummaryLabel: {
+    color: '#AAAAAA',
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  monthSummaryPositive: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  monthSummaryNegative: {
+    color: '#FFD1D1',
+    fontSize: 13,
+    fontWeight: '700',
   },
   draftEditForm: {
     gap: spacing.sm,
