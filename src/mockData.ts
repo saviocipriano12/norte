@@ -59,6 +59,8 @@ export type UpcomingBill = {
   amount: number;
   context: EntryContext;
   isRecurring: boolean;
+  status?: 'pending' | 'paid';
+  paidAt?: string | null;
 };
 
 export type Goal = {
@@ -67,6 +69,7 @@ export type Goal = {
   current: number;
   target: number;
   status: 'active' | 'paused' | 'completed';
+  targetDate?: string | null;
 };
 
 export const onboardingProfiles = [

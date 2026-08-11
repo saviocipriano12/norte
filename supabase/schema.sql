@@ -114,6 +114,8 @@ create table if not exists public.scheduled_bills (
   due_date date not null,
   context public.entry_context not null default 'Pessoal',
   is_recurring boolean not null default false,
+  status text not null default 'pending' check (status in ('pending', 'paid')),
+  paid_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -124,6 +126,7 @@ create table if not exists public.goals (
   target_amount numeric(14,2) not null,
   current_amount numeric(14,2) not null default 0,
   status public.goal_status not null default 'active',
+  target_date date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

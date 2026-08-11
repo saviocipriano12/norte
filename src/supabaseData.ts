@@ -59,7 +59,7 @@ type UserProfileInput = {
   selectedPainPoints: string[];
 };
 
-type GoalInput = Pick<Goal, 'title' | 'target' | 'current' | 'status'>;
+type GoalInput = Pick<Goal, 'title' | 'target' | 'current' | 'status' | 'targetDate'>;
 type UpcomingBillInput = Pick<UpcomingBill, 'title' | 'amount' | 'due' | 'context' | 'isRecurring'>;
 
 function requireSupabase() {
@@ -250,6 +250,7 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
             target: Number(goal.target_amount),
             current: Number(goal.current_amount),
             status: (goal.status as Goal['status'] | null) ?? 'active',
+            targetDate: (goal.target_date as string | null) ?? null,
           }))
         : [],
     upcomingBills:
@@ -261,6 +262,8 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
             due: bill.due_date as string,
             context: (bill.context as UpcomingBill['context'] | null) ?? 'Pessoal',
             isRecurring: Boolean(bill.is_recurring),
+            status: (bill.status as UpcomingBill['status'] | null) ?? 'pending',
+            paidAt: (bill.paid_at as string | null) ?? null,
           }))
         : [],
     movements: (movements ?? []).map((movement) => movementRowToApp(movement as never, accountMap)),
@@ -641,6 +644,7 @@ export async function createGoal(session: Session, input: GoalInput) {
       target_amount: input.target,
       current_amount: input.current,
       status: input.status,
+      target_date: input.targetDate ?? null,
     })
     .select('*')
     .single();
@@ -655,6 +659,7 @@ export async function createGoal(session: Session, input: GoalInput) {
     target: Number(data.target_amount),
     current: Number(data.current_amount),
     status: data.status as Goal['status'],
+    targetDate: (data.target_date as string | null) ?? null,
   } satisfies Goal;
 }
 
@@ -676,6 +681,7 @@ export async function updateGoal(session: Session, goalId: string, input: GoalIn
       target_amount: input.target,
       current_amount: input.current,
       status: input.status,
+      target_date: input.targetDate ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq('user_id', session.user.id)
@@ -693,6 +699,7 @@ export async function updateGoal(session: Session, goalId: string, input: GoalIn
     target: Number(data.target_amount),
     current: Number(data.current_amount),
     status: data.status as Goal['status'],
+    targetDate: (data.target_date as string | null) ?? null,
   } satisfies Goal;
 }
 
@@ -722,6 +729,8 @@ export async function createScheduledBill(session: Session, input: UpcomingBillI
     due: data.due_date as string,
     context: data.context as UpcomingBill['context'],
     isRecurring: Boolean(data.is_recurring),
+    status: (data.status as UpcomingBill['status'] | null) ?? 'pending',
+    paidAt: (data.paid_at as string | null) ?? null,
   } satisfies UpcomingBill;
 }
 
@@ -752,7 +761,22 @@ export async function updateScheduledBill(session: Session, billId: string, inpu
     due: data.due_date as string,
     context: data.context as UpcomingBill['context'],
     isRecurring: Boolean(data.is_recurring),
+    status: (data.status as UpcomingBill['status'] | null) ?? 'pending',
+    paidAt: (data.paid_at as string | null) ?? null,
   } satisfies UpcomingBill;
+}
+
+export async function setScheduledBillPaid(session: Session, billId: string, paidAt: string | null) {
+  const client = requireSupabase();
+  const { error } = await client
+    .from('scheduled_bills')
+    .update({ status: paidAt ? 'paid' : 'pending', paid_at: paidAt })
+    .eq('user_id', session.user.id)
+    .eq('id', billId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
 }
 
 export async function deleteScheduledBill(session: Session, billId: string) {

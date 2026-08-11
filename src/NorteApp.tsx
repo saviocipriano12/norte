@@ -71,6 +71,7 @@ import {
   deleteMovement,
   deleteGoal,
   deleteScheduledBill,
+  setScheduledBillPaid,
   deleteRemoteDraft,
   deleteWalletAccount,
   setWalletAccountArchived,
@@ -131,6 +132,7 @@ type GoalFormState = {
   title: string;
   target: string;
   current: string;
+  targetDate: string;
 };
 
 type BillFormState = {
@@ -235,6 +237,7 @@ const defaultGoalForm: GoalFormState = {
   title: '',
   target: '',
   current: '0',
+  targetDate: '',
 };
 
 const defaultBillForm: BillFormState = {
@@ -374,6 +377,22 @@ function isBillOverdue(value: string) {
   const today = new Date();
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   return due < startOfToday;
+}
+
+function isBillPending(bill: UpcomingBill) {
+  return (bill.status ?? 'pending') === 'pending';
+}
+
+function formatGoalDeadline(value: string | null | undefined) {
+  if (!value || !isValidIsoDate(value)) {
+    return null;
+  }
+
+  const days = Math.ceil((new Date(`${value}T12:00:00`).getTime() - new Date().setHours(0, 0, 0, 0)) / 86_400_000);
+  if (days < 0) return 'Prazo passou';
+  if (days === 0) return 'Prazo hoje';
+  if (days <= 14) return `${days} dias para o prazo`;
+  return `Prazo ${formatBillDue(value)}`;
 }
 
 function nextRecurringDue(value: string) {
@@ -560,7 +579,14 @@ export function NorteApp() {
         setAccountState(saved.accounts);
         setCardState(saved.cards ?? initialCards);
         setGoalState(saved.goals ?? goals);
-        setBillState((saved.upcomingBills ?? upcomingBills).map((bill) => ({ ...bill, context: bill.context ?? 'Pessoal', isRecurring: bill.isRecurring ?? false })));
+        setBillState(
+          (saved.upcomingBills ?? upcomingBills).map((bill) => ({
+            ...bill,
+            context: bill.context ?? 'Pessoal',
+            isRecurring: bill.isRecurring ?? false,
+            status: bill.status ?? 'pending',
+          })),
+        );
         setAssistantInput(saved.assistantInput);
       }
 
@@ -870,9 +896,10 @@ export function NorteApp() {
     .filter((account) => account.kind === 'reserve')
     .reduce((total, account) => total + account.balance, 0);
   const totalBalance = activeAccounts.reduce((total, account) => total + account.balance, 0);
-  const upcomingBillsTotal = sumAmounts(billState);
-  const personalBillsTotal = billState.reduce((total, bill) => total + bill.amount * personalContextWeight(bill.context), 0);
-  const businessBillsTotal = billState.reduce((total, bill) => total + bill.amount * movementBusinessWeight(bill.context), 0);
+  const pendingBills = billState.filter(isBillPending);
+  const upcomingBillsTotal = sumAmounts(pendingBills);
+  const personalBillsTotal = pendingBills.reduce((total, bill) => total + bill.amount * personalContextWeight(bill.context), 0);
+  const businessBillsTotal = pendingBills.reduce((total, bill) => total + bill.amount * movementBusinessWeight(bill.context), 0);
   const pendingIncome = sumAmounts(drafts.filter((draft) => draft.type === 'income'));
   const pendingExpense = sumAmounts(drafts.filter((draft) => draft.type === 'expense'));
   const pendingPersonalExpense = drafts.reduce(
@@ -891,7 +918,7 @@ export function NorteApp() {
   }, 0);
 
   const spendableToday = Math.max(personalBalance - personalBillsTotal - pendingPersonalExpense - 150, 0);
-  const overdueBills = billState.filter((bill) => isBillOverdue(bill.due));
+  const overdueBills = pendingBills.filter((bill) => isBillOverdue(bill.due));
   const hasFinancialData =
     movements.length > 0 || drafts.length > 0 || billState.length > 0 || accountState.some((account) => account.balance !== 0);
   const financialHealth: FinancialHealth =
@@ -2412,8 +2439,15 @@ export function NorteApp() {
     const target = parseCurrencyInput(goalForm.target);
     const current = parseCurrencyInput(goalForm.current);
 
-    if (!goalForm.title.trim() || !Number.isFinite(target) || target <= 0 || !Number.isFinite(current) || current < 0) {
-      showNotice('Confira os dados da meta', 'Informe um nome, um objetivo maior que zero e quanto voce ja guardou.');
+    if (
+      !goalForm.title.trim() ||
+      !Number.isFinite(target) ||
+      target <= 0 ||
+      !Number.isFinite(current) ||
+      current < 0 ||
+      (goalForm.targetDate.trim() && !isValidIsoDate(goalForm.targetDate.trim()))
+    ) {
+      showNotice('Confira os dados da meta', 'Informe um nome, um objetivo maior que zero e uma data no formato AAAA-MM-DD, se quiser definir prazo.');
       return;
     }
 
@@ -2423,6 +2457,7 @@ export function NorteApp() {
       current: Math.min(current, target),
       target,
       status: current >= target ? 'completed' : editingGoalId ? goalState.find((goal) => goal.id === editingGoalId)?.status ?? 'active' : 'active',
+      targetDate: goalForm.targetDate.trim() || null,
     };
 
     setGoalState((items) =>
@@ -2456,6 +2491,7 @@ export function NorteApp() {
       title: goal.title,
       target: String(goal.target),
       current: String(goal.current),
+      targetDate: goal.targetDate ?? '',
     });
     setShowGoalForm(true);
     setActiveTab('plan');
@@ -2542,6 +2578,8 @@ export function NorteApp() {
       due: billForm.due.trim(),
       context: billForm.context,
       isRecurring: billForm.isRecurring,
+      status: 'pending',
+      paidAt: null,
     };
 
     const savedBillId = editingBillId;
@@ -2600,8 +2638,11 @@ export function NorteApp() {
       cardId: null,
     };
 
-    const nextBill = bill.isRecurring ? { ...bill, due: nextRecurringDue(bill.due) } : null;
-    setBillState((items) => (nextBill ? items.map((item) => (item.id === bill.id ? nextBill : item)) : items.filter((item) => item.id !== bill.id)));
+    const paidAt = new Date().toISOString();
+    const nextBill = bill.isRecurring
+      ? { ...bill, due: nextRecurringDue(bill.due), status: 'pending' as const, paidAt: null }
+      : { ...bill, status: 'paid' as const, paidAt };
+    setBillState((items) => items.map((item) => (item.id === bill.id ? nextBill : item)));
     setMovements((items) => [movement, ...items]);
     setAccountState((items) => applyMovementToAccounts(items, movement));
 
@@ -2616,10 +2657,10 @@ export function NorteApp() {
           occurredAt: movement.createdAt,
           walletAccountId: movement.walletAccountId,
         });
-        if (nextBill) {
+        if (bill.isRecurring) {
           await updateScheduledBill(session, bill.id, nextBill);
         } else {
-          await deleteScheduledBill(session, bill.id);
+          await setScheduledBillPaid(session, bill.id, paidAt);
         }
         await refreshWorkspaceFromCloud();
       } catch (error) {
@@ -2630,6 +2671,19 @@ export function NorteApp() {
             `O pagamento entrou no app, mas a sincronizacao falhou: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
           ),
         ]);
+      }
+    }
+  };
+
+  const handleReopenBill = async (bill: UpcomingBill) => {
+    setBillState((items) => items.map((item) => (item.id === bill.id ? { ...item, status: 'pending', paidAt: null } : item)));
+
+    if (session && supabase) {
+      try {
+        await setScheduledBillPaid(session, bill.id, null);
+      } catch (error) {
+        setBillState((items) => items.map((item) => (item.id === bill.id ? bill : item)));
+        showNotice('Nao foi possivel reabrir a conta', error instanceof Error ? error.message : 'Tente novamente em alguns instantes.');
       }
     }
   };
@@ -3001,6 +3055,7 @@ export function NorteApp() {
                         progress={goal.progress}
                         accent={goal.accent}
                         status={goal.status}
+                        targetDate={goal.targetDate}
                       />
                     ))
                   ) : (
@@ -3742,6 +3797,13 @@ export function NorteApp() {
                       placeholderTextColor={palette.textMuted}
                       style={styles.field}
                     />
+                    <TextInput
+                      value={goalForm.targetDate}
+                      onChangeText={(value) => setGoalForm((current) => ({ ...current, targetDate: value }))}
+                      placeholder="Prazo opcional (AAAA-MM-DD)"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
                     <Pressable style={styles.primaryButtonCompact} onPress={handleSaveGoal}>
                       <Text style={styles.primaryButtonText}>{editingGoalId ? 'Atualizar meta' : 'Salvar meta'}</Text>
                     </Pressable>
@@ -3758,6 +3820,7 @@ export function NorteApp() {
                           progress={goal.progress}
                           accent={goal.accent}
                           status={goal.status}
+                          targetDate={goal.targetDate}
                         />
                         {contributingGoalId === goal.id ? (
                           <View style={styles.goalContributionForm}>
@@ -3897,29 +3960,42 @@ export function NorteApp() {
                 ) : null}
                 <View style={styles.detailStack}>
                   {billState.length > 0 ? (
-                    billState.map((bill) => (
+                    [...billState]
+                      .sort((left, right) => Number(!isBillPending(left)) - Number(!isBillPending(right)) || left.due.localeCompare(right.due))
+                      .map((bill) => (
                       <View key={bill.id} style={styles.goalSubCard}>
                         <View style={styles.flexOne}>
                           <Text style={styles.cardTitle}>{bill.title}</Text>
                           <Text style={styles.mutedText}>
-                            {isBillOverdue(bill.due) ? 'Vencida' : `Vence ${formatBillDue(bill.due)}`} / {bill.context}
+                            {isBillPending(bill)
+                              ? isBillOverdue(bill.due)
+                                ? 'Vencida'
+                                : `Vence ${formatBillDue(bill.due)}`
+                              : `Paga ${formatBillDue(bill.paidAt ?? bill.due)}`}{' '}
+                            / {bill.context}
                             {bill.isRecurring ? ' / Todo mes' : ''}
                           </Text>
                         </View>
                         <View style={styles.billItemSide}>
                           <Text style={styles.amountNegative}>{currency.format(bill.amount)}</Text>
                           <View style={styles.inlineActions}>
-                            <Pressable
-                              onPress={() =>
-                                confirmDestructiveAction(
-                                  'Marcar como paga?',
-                                  `Vou registrar ${currency.format(bill.amount)} como despesa e atualizar o saldo da ${pickAccountForContext(accountState, bill.context)?.name ?? 'conta selecionada'}.`,
-                                  () => handlePayBill(bill),
-                                )
-                              }
-                            >
-                              <Text style={styles.inlineLink}>Pagar</Text>
-                            </Pressable>
+                            {isBillPending(bill) ? (
+                              <Pressable
+                                onPress={() =>
+                                  confirmDestructiveAction(
+                                    'Marcar como paga?',
+                                    `Vou registrar ${currency.format(bill.amount)} como despesa e atualizar o saldo da ${pickAccountForContext(accountState, bill.context)?.name ?? 'conta selecionada'}.`,
+                                    () => handlePayBill(bill),
+                                  )
+                                }
+                              >
+                                <Text style={styles.inlineLink}>Pagar</Text>
+                              </Pressable>
+                            ) : (
+                              <Pressable onPress={() => void handleReopenBill(bill)}>
+                                <Text style={styles.inlineLink}>Reabrir</Text>
+                              </Pressable>
+                            )}
                             <Pressable onPress={() => handleEditBill(bill)}>
                               <Text style={styles.inlineLink}>Editar</Text>
                             </Pressable>
@@ -4378,6 +4454,7 @@ function GoalListItem({
   progress,
   accent,
   status,
+  targetDate,
 }: {
   title: string;
   current: number;
@@ -4385,8 +4462,10 @@ function GoalListItem({
   progress: number;
   accent: string;
   status: Goal['status'];
+  targetDate?: string | null;
 }) {
   const statusLabel = status === 'completed' ? 'Concluida' : status === 'paused' ? 'Pausada' : 'Em andamento';
+  const deadlineLabel = formatGoalDeadline(targetDate);
 
   return (
     <View style={styles.goalListItem}>
@@ -4407,7 +4486,7 @@ function GoalListItem({
         <View style={[styles.goalFill, { width: `${Math.max(progress * 100, 6)}%`, backgroundColor: accent }]} />
       </View>
       <View style={styles.rowBetween}>
-        <Text style={styles.goalMetricSub}>{statusLabel}</Text>
+        <Text style={styles.goalMetricSub}>{deadlineLabel ? `${statusLabel} · ${deadlineLabel}` : statusLabel}</Text>
         <Text style={styles.goalMetricSub}>{Math.round(progress * 100)}%</Text>
       </View>
     </View>
