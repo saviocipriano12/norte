@@ -7,6 +7,7 @@ import {
   initialMessages,
   type Account,
   type DraftEntry,
+  type FinancialConnection,
   type FinancialCategory,
   type Message,
   type Movement,
@@ -27,6 +28,7 @@ type WorkspaceSnapshot = {
   drafts: DraftEntry[];
   messages: Message[];
   categories: FinancialCategory[];
+  connections: FinancialConnection[];
 };
 
 type AccountInput = {
@@ -49,6 +51,7 @@ type CardInput = {
 };
 
 type FinancialCategoryInput = Pick<FinancialCategory, 'name' | 'icon' | 'color' | 'context'>;
+type FinancialConnectionInput = Pick<FinancialConnection, 'institutionName' | 'connectionType' | 'status' | 'linkedAccountId'>;
 
 type MovementInput = {
   title: string;
@@ -161,6 +164,24 @@ function categoryRowToApp(category: {
   };
 }
 
+function connectionRowToApp(row: {
+  id: string;
+  institution_name: string;
+  connection_type: string;
+  status: string;
+  last_synced_at: string | null;
+  wallet_account_id: string | null;
+}): FinancialConnection {
+  return {
+    id: row.id,
+    institutionName: row.institution_name,
+    connectionType: row.connection_type as FinancialConnection['connectionType'],
+    status: row.status as FinancialConnection['status'],
+    lastSyncedAt: row.last_synced_at,
+    linkedAccountId: row.wallet_account_id,
+  };
+}
+
 function movementRowToApp(
   movement: {
     id: string;
@@ -260,7 +281,7 @@ export async function ensureUserProfile(input: UserProfileInput) {
 export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSnapshot | null> {
   const client = requireSupabase();
 
-  const [{ data: accounts }, { data: cards }, { data: goals }, { data: upcomingBills }, { data: movements }, { data: drafts }, { data: messages }, { data: categories }] = await Promise.all([
+  const [{ data: accounts }, { data: cards }, { data: goals }, { data: upcomingBills }, { data: movements }, { data: drafts }, { data: messages }, { data: categories }, { data: connections }] = await Promise.all([
     client.from('wallet_accounts').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
     client.from('cards').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
     client.from('goals').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
@@ -274,6 +295,7 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
       .order('created_at', { ascending: false }),
     client.from('assistant_messages').select('id, role, text').eq('user_id', userId).order('created_at', { ascending: true }).limit(20),
     client.from('financial_categories').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
+    client.from('financial_connections').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
   ]);
 
   const accountRows = accounts ?? [];
@@ -322,7 +344,26 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
     })),
     messages: (messages ?? []).length > 0 ? (messages ?? []).map(messageRowToApp) : initialMessages,
     categories: (categories ?? []).map((category) => categoryRowToApp(category as never)),
+    connections: (connections ?? []).map((connection) => connectionRowToApp(connection as never)),
   };
+}
+
+export async function createFinancialConnection(session: Session, input: FinancialConnectionInput) {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from('financial_connections')
+    .insert({
+      user_id: session.user.id,
+      wallet_account_id: input.linkedAccountId ?? null,
+      institution_name: input.institutionName.trim(),
+      connection_type: input.connectionType,
+      status: input.status,
+      last_synced_at: input.connectionType === 'manual' ? new Date().toISOString() : null,
+    })
+    .select('*')
+    .single();
+  if (error || !data) throw new Error(error?.message || 'Nao foi possivel registrar a conexão.');
+  return connectionRowToApp(data as never);
 }
 
 export async function createFinancialCategory(session: Session, input: FinancialCategoryInput) {

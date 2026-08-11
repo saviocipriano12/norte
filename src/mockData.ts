@@ -107,6 +107,15 @@ export type WalletCard = {
   isBusiness?: boolean;
 };
 
+export type FinancialConnection = {
+  id: string;
+  institutionName: string;
+  connectionType: 'manual' | 'import' | 'open_finance';
+  status: 'active' | 'needs_attention' | 'planned';
+  lastSyncedAt?: string | null;
+  linkedAccountId?: string | null;
+};
+
 export type UpcomingBill = {
   id: string;
   title: string;

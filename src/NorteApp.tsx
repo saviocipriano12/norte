@@ -59,6 +59,7 @@ import {
   type DraftEntry,
   type EntryContext,
   type FinancialCategory,
+  type FinancialConnection,
   type Goal,
   type Message,
   type Movement,
@@ -71,6 +72,7 @@ import { loadPersistedState, removePersistedState, savePersistedState } from './
 import {
   createMovement,
   createFinancialCategory,
+  createFinancialConnection,
   createGoal,
   createScheduledBill,
   createWalletAccount,
@@ -164,6 +166,10 @@ type CategoryFormState = {
   color: string;
   context: EntryContext | null;
 };
+type ConnectionFormState = {
+  institutionName: string;
+  linkedAccountId: string;
+};
 
 type MovementTypeFilter = 'all' | 'income' | 'expense';
 type MovementContextFilter = 'all' | EntryContext;
@@ -193,6 +199,7 @@ type PersistedState = {
   goals?: Goal[];
   upcomingBills?: UpcomingBill[];
   categories?: FinancialCategory[];
+  connections?: FinancialConnection[];
   assistantInput: string;
 };
 
@@ -281,6 +288,7 @@ const defaultBillForm: BillFormState = {
 const categoryIconOptions = ['pricetag-outline', 'restaurant-outline', 'car-outline', 'briefcase-outline', 'home-outline', 'cart-outline', 'heart-outline', 'sparkles-outline'];
 const categoryColorOptions = ['#111111', '#21C45A', '#FF8A00', '#5B8CFF', '#FFD84D', '#EF4444'];
 const defaultCategoryForm: CategoryFormState = { name: '', icon: 'pricetag-outline', color: '#5B8CFF', context: null };
+const defaultConnectionForm: ConnectionFormState = { institutionName: '', linkedAccountId: '' };
 
 function sumAmounts(items: Array<{ amount: number }>) {
   return items.reduce((total, item) => total + item.amount, 0);
@@ -532,6 +540,7 @@ export function NorteApp() {
   const [accountState, setAccountState] = useState<Account[]>(initialAccounts);
   const [cardState, setCardState] = useState<WalletCard[]>(initialCards);
   const [categoryState, setCategoryState] = useState<FinancialCategory[]>(initialCategories);
+  const [connectionState, setConnectionState] = useState<FinancialConnection[]>([]);
   const [goalState, setGoalState] = useState<Goal[]>(goals);
   const [billState, setBillState] = useState<UpcomingBill[]>(upcomingBills);
   const [assistantInput, setAssistantInput] = useState(initialAssistantInput);
@@ -555,6 +564,8 @@ export function NorteApp() {
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [categoryForm, setCategoryForm] = useState<CategoryFormState>(defaultCategoryForm);
   const [categoryError, setCategoryError] = useState<string | null>(null);
+  const [showConnectionForm, setShowConnectionForm] = useState(false);
+  const [connectionForm, setConnectionForm] = useState<ConnectionFormState>(defaultConnectionForm);
   const [movementTypeFilter, setMovementTypeFilter] = useState<MovementTypeFilter>('all');
   const [movementContextFilter, setMovementContextFilter] = useState<MovementContextFilter>('all');
   const [movementCategoryFilter, setMovementCategoryFilter] = useState<MovementCategoryFilter>('all');
@@ -635,6 +646,7 @@ export function NorteApp() {
         setAccountState(saved.accounts);
         setCardState(saved.cards ?? initialCards);
         setCategoryState(saved.categories ?? initialCategories);
+        setConnectionState(saved.connections ?? []);
         setGoalState(saved.goals ?? goals);
         setBillState(
           (saved.upcomingBills ?? upcomingBills).map((bill) => ({
@@ -720,6 +732,7 @@ export function NorteApp() {
         setAccountState(snapshot.accounts);
         setCardState(snapshot.cards);
         setCategoryState([...initialCategories, ...snapshot.categories]);
+        setConnectionState(snapshot.connections);
         setGoalState(snapshot.goals);
         setBillState(snapshot.upcomingBills);
         setMovements(snapshot.movements);
@@ -850,6 +863,7 @@ export function NorteApp() {
       accounts: accountState,
       cards: cardState,
       categories: categoryState,
+      connections: connectionState,
       goals: goalState,
       upcomingBills: billState,
       assistantInput,
@@ -871,6 +885,7 @@ export function NorteApp() {
     themeMode,
     cardState,
     categoryState,
+    connectionState,
     billState,
     isLocalMode,
   ]);
@@ -2450,6 +2465,33 @@ export function NorteApp() {
     }
   };
 
+  const handleSaveManualConnection = async () => {
+    const institutionName = connectionForm.institutionName.trim();
+    if (!institutionName) {
+      showNotice('Informe a instituição', 'Ex.: Nubank, Itaú, Banco do Brasil ou dinheiro em espécie.');
+      return;
+    }
+    const localConnection: FinancialConnection = {
+      id: `connection-${Date.now()}`,
+      institutionName,
+      connectionType: 'manual',
+      status: 'active',
+      linkedAccountId: connectionForm.linkedAccountId || null,
+      lastSyncedAt: new Date().toISOString(),
+    };
+    setConnectionState((current) => [localConnection, ...current]);
+    setConnectionForm(defaultConnectionForm);
+    setShowConnectionForm(false);
+    if (session && supabase) {
+      try {
+        const remoteConnection = await createFinancialConnection(session, localConnection);
+        setConnectionState((current) => current.map((item) => (item.id === localConnection.id ? remoteConnection : item)));
+      } catch (error) {
+        showNotice('Conexão local criada', error instanceof Error ? `Ela ainda não sincronizou: ${error.message}` : 'Ela ainda não sincronizou.');
+      }
+    }
+  };
+
   const handleEditMovement = (movement: Movement) => {
     setEditingMovementId(movement.id);
     setShowManualEntry(true);
@@ -3983,6 +4025,39 @@ export function NorteApp() {
                   </View>
                 </Card>
               ) : null}
+
+              <Card variant="soft">
+                <View style={styles.rowBetween}>
+                  <View>
+                    <Text style={styles.cardTitle}>Conexões financeiras</Text>
+                    <Text style={styles.mutedText}>Origem dos saldos e movimentos.</Text>
+                  </View>
+                  <Pressable onPress={() => setShowConnectionForm((value) => !value)}>
+                    <Text style={styles.inlineLink}>{showConnectionForm ? 'Fechar' : 'Adicionar'}</Text>
+                  </Pressable>
+                </View>
+                {showConnectionForm ? (
+                  <View style={styles.manualForm}>
+                    <TextInput value={connectionForm.institutionName} onChangeText={(institutionName) => setConnectionForm((current) => ({ ...current, institutionName }))} placeholder="Instituição ou carteira" placeholderTextColor={palette.textMuted} style={styles.field} />
+                    <View style={styles.pillRow}>
+                      <Pill label="Sem conta" selected={!connectionForm.linkedAccountId} onPress={() => setConnectionForm((current) => ({ ...current, linkedAccountId: '' }))} />
+                      {activeAccounts.map((account) => <Pill key={account.id} label={account.name} selected={connectionForm.linkedAccountId === account.id} onPress={() => setConnectionForm((current) => ({ ...current, linkedAccountId: account.id }))} />)}
+                    </View>
+                    <Pressable style={styles.primaryButtonCompact} onPress={() => void handleSaveManualConnection()}><Text style={styles.primaryButtonText}>Adicionar manualmente</Text></Pressable>
+                  </View>
+                ) : null}
+                <View style={styles.detailStack}>
+                  {connectionState.map((connection) => {
+                    const account = accountState.find((item) => item.id === connection.linkedAccountId);
+                    return <View key={connection.id} style={styles.connectionRow}>
+                      <View style={styles.connectionIcon}><Ionicons name={connection.connectionType === 'manual' ? 'create-outline' : 'sync-outline'} size={17} color={palette.text} /></View>
+                      <View style={styles.flexOne}><Text style={styles.bodyText}>{connection.institutionName}</Text><Text style={styles.mutedText}>{connection.connectionType === 'manual' ? `Manual${account ? ` / ${account.name}` : ''}` : 'Open Finance'}</Text></View>
+                      <View style={styles.connectionStatus}><View style={[styles.categoryDot, { backgroundColor: connection.status === 'active' ? '#21C45A' : '#FF8A00' }]} /><Text style={styles.mutedText}>{connection.status === 'active' ? 'Atualizada' : 'Atenção'}</Text></View>
+                    </View>;
+                  })}
+                  <View style={styles.connectionPlannedRow}><Ionicons name="shield-checkmark-outline" size={17} color={palette.textMuted} /><Text style={styles.mutedText}>Open Finance em preparação. A conexão real exigirá seu consentimento e parceiro regulado.</Text></View>
+                </View>
+              </Card>
 
               <Card variant="soft">
                 <Text style={styles.cardTitle}>Contas na carteira</Text>
@@ -7013,6 +7088,33 @@ function createStyles(palette: ThemePalette) {
     borderRadius: radius.sm,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  connectionRow: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  connectionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.backgroundSoft,
+  },
+  connectionStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  connectionPlannedRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
   },
   cardDayField: {
     flex: 1,
