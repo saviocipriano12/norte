@@ -10,6 +10,11 @@ export type AssistantFinancialContext = {
   upcomingBillsTotal: number;
   upcomingBillsCount: number;
   overdueBillsCount: number;
+  categorySpending: Array<{
+    category: string;
+    amount: number;
+    movementCount: number;
+  }>;
 };
 
 export type AssistantTurnRequest = {

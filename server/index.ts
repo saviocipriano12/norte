@@ -120,6 +120,13 @@ const assistantTurnRequestSchema = z.object({
       upcomingBillsTotal: z.number().min(0),
       upcomingBillsCount: z.number().int().min(0),
       overdueBillsCount: z.number().int().min(0),
+      categorySpending: z.array(
+        z.object({
+          category: z.string().min(1),
+          amount: z.number().min(0),
+          movementCount: z.number().int().min(0),
+        }),
+      ),
     })
     .optional(),
 });
@@ -143,6 +150,8 @@ const assistantSyncRequestSchema = z.object({
         context: z.enum(['Pessoal', 'Negocio', 'Compartilhado']).optional(),
         question: z.string().optional(),
         note: z.string().min(1),
+        occurredAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        category: z.enum(['Alimentacao', 'Moradia', 'Transporte', 'Assinaturas', 'Saude', 'Educacao', 'Lazer', 'Trabalho', 'Impostos', 'Vendas', 'Servicos', 'Outros']).optional(),
       }),
     ),
   }),

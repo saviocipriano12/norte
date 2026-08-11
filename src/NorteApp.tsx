@@ -874,7 +874,7 @@ export function NorteApp() {
           const search = movementSearch.trim().toLocaleLowerCase('pt-BR');
           const matchesSearch =
             !search ||
-            `${movement.title} ${movement.account} ${movement.context} ${movement.source}`.toLocaleLowerCase('pt-BR').includes(search);
+            `${movement.title} ${movement.account} ${movement.context} ${movement.category ?? 'Outros'} ${movement.source}`.toLocaleLowerCase('pt-BR').includes(search);
 
           return (
             matchesSearch &&
@@ -928,6 +928,21 @@ export function NorteApp() {
 
   const spendableToday = Math.max(personalBalance - personalBillsTotal - pendingPersonalExpense - 150, 0);
   const overdueBills = pendingBills.filter((bill) => isBillOverdue(bill.due));
+  const categorySpending = useMemo(() => {
+    const totals = new Map<string, { amount: number; movementCount: number }>();
+
+    movements
+      .filter((movement) => movement.type === 'expense' && isMovementInPeriod(movement.createdAt, 'month'))
+      .forEach((movement) => {
+        const category = movement.category ?? 'Outros';
+        const current = totals.get(category) ?? { amount: 0, movementCount: 0 };
+        totals.set(category, { amount: current.amount + movement.amount, movementCount: current.movementCount + 1 });
+      });
+
+    return [...totals.entries()]
+      .map(([category, totals]) => ({ category, ...totals }))
+      .sort((left, right) => right.amount - left.amount);
+  }, [movements]);
   const hasFinancialData =
     movements.length > 0 || drafts.length > 0 || billState.length > 0 || accountState.some((account) => account.balance !== 0);
   const financialHealth: FinancialHealth =
@@ -1731,6 +1746,7 @@ export function NorteApp() {
           upcomingBillsTotal,
           upcomingBillsCount: billState.length,
           overdueBillsCount: overdueBills.length,
+          categorySpending,
         },
       }, session?.access_token);
 

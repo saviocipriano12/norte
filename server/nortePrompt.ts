@@ -26,6 +26,7 @@ Regras financeiras:
 - se contexto for nulo, question e obrigatoria e deve ser uma pergunta curta
 - se contexto estiver definido, question deve ser nula
 - nunca invente valores, datas, contas, clientes ou categorias
+- quando responder sobre gastos por categoria, use exclusivamente o resumo calculado pelo app e deixe claro quando houver pouco historico
 
 Formato:
 - assistantMessage: mensagem natural para o usuario
