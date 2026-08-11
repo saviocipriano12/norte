@@ -376,6 +376,21 @@ function formatBillDue(value: string) {
   return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 }
 
+function formatAuthError(error: unknown) {
+  const message = error instanceof Error ? error.message : '';
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes('invalid login credentials')) return 'E-mail ou senha incorretos. Confira e tente novamente.';
+  if (normalized.includes('email not confirmed')) return 'Confirme seu e-mail antes de entrar na conta.';
+  if (normalized.includes('user already registered') || normalized.includes('already been registered')) return 'Este e-mail ja possui uma conta. Tente entrar.';
+  if (normalized.includes('password') && normalized.includes('at least')) return 'A senha precisa ter pelo menos 6 caracteres.';
+  if (normalized.includes('email rate limit') || normalized.includes('too many requests')) return 'Muitas tentativas. Aguarde um pouco antes de tentar novamente.';
+  if (normalized.includes('unable to validate email') || normalized.includes('invalid email')) return 'Informe um e-mail valido para continuar.';
+  if (normalized.includes('network') || normalized.includes('fetch')) return 'Nao foi possivel conectar. Verifique sua internet e tente novamente.';
+
+  return message || 'Nao foi possivel autenticar agora. Tente novamente.';
+}
+
 function isBillOverdue(value: string) {
   if (!isValidIsoDate(value)) {
     return false;
@@ -623,7 +638,7 @@ export function NorteApp() {
       }
 
       if (error) {
-        setAuthError(error.message);
+        setAuthError(formatAuthError(error));
       }
 
       setSession(data.session);
@@ -680,7 +695,7 @@ export function NorteApp() {
         setMessages(snapshot.messages);
       } catch (error) {
         if (active) {
-          setAuthError(error instanceof Error ? error.message : 'Falha ao sincronizar com o Supabase.');
+          setAuthError(formatAuthError(error));
         }
       } finally {
         if (active) {
@@ -1216,7 +1231,7 @@ export function NorteApp() {
         }
       }
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : 'Falha na autenticacao.');
+      setAuthError(formatAuthError(error));
     } finally {
       setIsAuthLoading(false);
     }
@@ -1227,7 +1242,15 @@ export function NorteApp() {
       return;
     }
 
-    await supabase.auth.signOut();
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        throw error;
+      }
+    } catch (error) {
+      setAuthError(formatAuthError(error));
+      return;
+    }
     await removePersistedState(STORAGE_KEY);
     setMessages(initialMessages);
     setDrafts(initialDrafts);
@@ -1273,6 +1296,18 @@ export function NorteApp() {
     setMovements(snapshot.movements);
     setDrafts(snapshot.drafts);
     setMessages(snapshot.messages);
+  };
+
+  const handleRefreshWorkspace = async () => {
+    setIsRemoteSyncing(true);
+    try {
+      await refreshWorkspaceFromCloud();
+      setAuthError(null);
+    } catch (error) {
+      setAuthError(formatAuthError(error));
+    } finally {
+      setIsRemoteSyncing(false);
+    }
   };
 
   const stopAssistantPlayback = () => {
@@ -3076,7 +3111,7 @@ export function NorteApp() {
           <View style={styles.headerActions}>
             <View style={styles.headerBadge}>
               <Text style={styles.headerBadgeText}>
-                {isLocalMode ? 'Modo demonstracao' : isRemoteSyncing ? 'Sincronizando' : 'Nuvem ativa'}
+                {isLocalMode ? 'Modo demonstracao' : isRemoteSyncing ? 'Sincronizando' : authError ? 'Erro na nuvem' : 'Nuvem ativa'}
               </Text>
             </View>
             <Pressable style={styles.avatarButton} onPress={() => setIsProfileOpen((value) => !value)}>
@@ -3102,6 +3137,14 @@ export function NorteApp() {
               <Ionicons name="settings-outline" size={18} color={palette.text} />
               <Text style={styles.profileActionText}>Abrir configuracoes</Text>
             </Pressable>
+            {authError && !isLocalMode ? (
+              <View style={styles.profileSyncError}>
+                <Text style={styles.profileSyncErrorText}>{authError}</Text>
+                <Pressable onPress={() => void handleRefreshWorkspace()} disabled={isRemoteSyncing}>
+                  <Text style={styles.inlineLink}>{isRemoteSyncing ? 'Tentando...' : 'Tentar sincronizar'}</Text>
+                </Pressable>
+              </View>
+            ) : null}
             {isLocalMode ? (
               <Pressable style={styles.profileAction} onPress={() => setIsLocalMode(false)}>
                 <Ionicons name="cloud-upload-outline" size={18} color={palette.text} />
@@ -5408,6 +5451,17 @@ function createStyles(palette: ThemePalette) {
     color: palette.text,
     fontSize: 13,
     fontWeight: '700',
+  },
+  profileSyncError: {
+    gap: spacing.xs,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: palette.id === 'dark' ? '#3A1A1A' : '#FEE2E2',
+  },
+  profileSyncErrorText: {
+    color: palette.id === 'dark' ? '#FFD1D1' : '#991B1B',
+    fontSize: 12,
+    lineHeight: 17,
   },
   detailStack: {
     gap: spacing.md,
