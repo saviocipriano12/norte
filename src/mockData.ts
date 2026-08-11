@@ -63,6 +63,7 @@ export type Goal = {
   title: string;
   current: number;
   target: number;
+  status: 'active' | 'paused' | 'completed';
 };
 
 export const onboardingProfiles = [
@@ -220,11 +221,13 @@ export const goals: Goal[] = [
     title: 'Reserva pessoal',
     current: 9200,
     target: 15000,
+    status: 'active',
   },
   {
     id: 'g2',
     title: 'Troca do notebook',
     current: 2100,
     target: 6500,
+    status: 'active',
   },
 ];

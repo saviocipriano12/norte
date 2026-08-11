@@ -59,7 +59,7 @@ type UserProfileInput = {
   selectedPainPoints: string[];
 };
 
-type GoalInput = Pick<Goal, 'title' | 'target' | 'current'>;
+type GoalInput = Pick<Goal, 'title' | 'target' | 'current' | 'status'>;
 type UpcomingBillInput = Pick<UpcomingBill, 'title' | 'amount' | 'due' | 'context'>;
 
 function requireSupabase() {
@@ -247,6 +247,7 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
             title: goal.title as string,
             target: Number(goal.target_amount),
             current: Number(goal.current_amount),
+            status: (goal.status as Goal['status'] | null) ?? 'active',
           }))
         : [],
     upcomingBills:
@@ -623,6 +624,7 @@ export async function createGoal(session: Session, input: GoalInput) {
       title: input.title,
       target_amount: input.target,
       current_amount: input.current,
+      status: input.status,
     })
     .select('*')
     .single();
@@ -636,6 +638,7 @@ export async function createGoal(session: Session, input: GoalInput) {
     title: data.title as string,
     target: Number(data.target_amount),
     current: Number(data.current_amount),
+    status: data.status as Goal['status'],
   } satisfies Goal;
 }
 
@@ -656,6 +659,7 @@ export async function updateGoal(session: Session, goalId: string, input: GoalIn
       title: input.title,
       target_amount: input.target,
       current_amount: input.current,
+      status: input.status,
       updated_at: new Date().toISOString(),
     })
     .eq('user_id', session.user.id)
@@ -672,6 +676,7 @@ export async function updateGoal(session: Session, goalId: string, input: GoalIn
     title: data.title as string,
     target: Number(data.target_amount),
     current: Number(data.current_amount),
+    status: data.status as Goal['status'],
   } satisfies Goal;
 }
 

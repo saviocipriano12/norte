@@ -432,6 +432,8 @@ export function NorteApp() {
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalForm, setGoalForm] = useState<GoalFormState>(defaultGoalForm);
   const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
+  const [contributingGoalId, setContributingGoalId] = useState<string | null>(null);
+  const [goalContributionAmount, setGoalContributionAmount] = useState('');
   const [showBillForm, setShowBillForm] = useState(false);
   const [billForm, setBillForm] = useState<BillFormState>(defaultBillForm);
   const [editingBillId, setEditingBillId] = useState<string | null>(null);
@@ -2314,6 +2316,7 @@ export function NorteApp() {
       title: goalForm.title.trim(),
       current: Math.min(current, target),
       target,
+      status: current >= target ? 'completed' : editingGoalId ? goalState.find((goal) => goal.id === editingGoalId)?.status ?? 'active' : 'active',
     };
 
     setGoalState((items) =>
@@ -2350,6 +2353,44 @@ export function NorteApp() {
     });
     setShowGoalForm(true);
     setActiveTab('plan');
+  };
+
+  const saveGoalUpdate = async (goal: Goal) => {
+    setGoalState((items) => items.map((item) => (item.id === goal.id ? goal : item)));
+
+    if (session && supabase) {
+      try {
+        await updateGoal(session, goal.id, goal);
+        await refreshWorkspaceFromCloud();
+      } catch (error) {
+        setMessages((items) => [
+          ...items,
+          createMessage('assistant', `A meta foi atualizada neste aparelho, mas nao sincronizou: ${error instanceof Error ? error.message : 'erro desconhecido'}.`),
+        ]);
+      }
+    }
+  };
+
+  const handleGoalContribution = async (goal: Goal) => {
+    const contribution = parseCurrencyInput(goalContributionAmount);
+    if (!Number.isFinite(contribution) || contribution <= 0) {
+      showNotice('Confira o aporte', 'Informe um valor maior que zero para atualizar sua meta.');
+      return;
+    }
+
+    const current = Math.min(goal.current + contribution, goal.target);
+    await saveGoalUpdate({ ...goal, current, status: current >= goal.target ? 'completed' : 'active' });
+    setGoalContributionAmount('');
+    setContributingGoalId(null);
+  };
+
+  const toggleGoalStatus = async (goal: Goal) => {
+    const nextStatus = goal.status === 'paused' ? 'active' : 'paused';
+    await saveGoalUpdate({ ...goal, status: nextStatus });
+  };
+
+  const completeGoal = async (goal: Goal) => {
+    await saveGoalUpdate({ ...goal, current: goal.target, status: 'completed' });
   };
 
   const handleDeleteGoal = (goalId: string) => {
@@ -2527,6 +2568,8 @@ export function NorteApp() {
     setShowGoalForm(false);
     setGoalForm(defaultGoalForm);
     setEditingGoalId(null);
+    setContributingGoalId(null);
+    setGoalContributionAmount('');
     setShowBillForm(false);
     setBillForm(defaultBillForm);
     setEditingBillId(null);
@@ -2536,10 +2579,15 @@ export function NorteApp() {
 
   const sortedGoals = useMemo(
     () =>
-      goalState.map((goal) => ({
-        ...goal,
-        progress: Math.min(goal.current / goal.target, 1),
-      })),
+      [...goalState]
+        .sort((left, right) => {
+          const ranking = { active: 0, paused: 1, completed: 2 } as const;
+          return ranking[left.status] - ranking[right.status];
+        })
+        .map((goal) => ({
+          ...goal,
+          progress: Math.min(goal.current / goal.target, 1),
+        })),
     [goalState],
   );
   const decoratedGoals = useMemo(
@@ -2835,6 +2883,7 @@ export function NorteApp() {
                         target={goal.target}
                         progress={goal.progress}
                         accent={goal.accent}
+                        status={goal.status}
                       />
                     ))
                   ) : (
@@ -3538,11 +3587,57 @@ export function NorteApp() {
                           target={goal.target}
                           progress={goal.progress}
                           accent={goal.accent}
+                          status={goal.status}
                         />
+                        {contributingGoalId === goal.id ? (
+                          <View style={styles.goalContributionForm}>
+                            <TextInput
+                              value={goalContributionAmount}
+                              onChangeText={setGoalContributionAmount}
+                              placeholder="Valor do aporte"
+                              keyboardType="decimal-pad"
+                              placeholderTextColor={palette.textMuted}
+                              style={styles.field}
+                            />
+                            <View style={styles.inlineActions}>
+                              <Pressable onPress={() => void handleGoalContribution(goal)}>
+                                <Text style={styles.inlineLink}>Salvar aporte</Text>
+                              </Pressable>
+                              <Pressable
+                                onPress={() => {
+                                  setContributingGoalId(null);
+                                  setGoalContributionAmount('');
+                                }}
+                              >
+                                <Text style={styles.inlineDanger}>Cancelar</Text>
+                              </Pressable>
+                            </View>
+                          </View>
+                        ) : null}
                         <View style={styles.inlineActions}>
                           <Pressable onPress={() => handleEditGoal(goal)}>
                             <Text style={styles.inlineLink}>Editar</Text>
                           </Pressable>
+                          {goal.status !== 'completed' ? (
+                            <Pressable
+                              onPress={() => {
+                                setContributingGoalId(goal.id);
+                                setGoalContributionAmount('');
+                              }}
+                            >
+                              <Text style={styles.inlineLink}>Aportar</Text>
+                            </Pressable>
+                          ) : null}
+                          {goal.status === 'active' || goal.status === 'paused' ? (
+                            <Pressable onPress={() => void toggleGoalStatus(goal)}>
+                              <Text style={styles.inlineLink}>{goal.status === 'paused' ? 'Retomar' : 'Pausar'}</Text>
+                            </Pressable>
+                          ) : null}
+                          {goal.status !== 'completed' ? (
+                            <Pressable onPress={() => void completeGoal(goal)}>
+                              <Text style={styles.inlineLink}>Concluir</Text>
+                            </Pressable>
+                          ) : null}
                           <Pressable onPress={() => handleDeleteGoal(goal.id)}>
                             <Text style={styles.inlineDanger}>Excluir meta</Text>
                           </Pressable>
@@ -4096,13 +4191,17 @@ function GoalListItem({
   target,
   progress,
   accent,
+  status,
 }: {
   title: string;
   current: number;
   target: number;
   progress: number;
   accent: string;
+  status: Goal['status'];
 }) {
+  const statusLabel = status === 'completed' ? 'Concluida' : status === 'paused' ? 'Pausada' : 'Em andamento';
+
   return (
     <View style={styles.goalListItem}>
       <View style={styles.rowBetween}>
@@ -4122,7 +4221,7 @@ function GoalListItem({
         <View style={[styles.goalFill, { width: `${Math.max(progress * 100, 6)}%`, backgroundColor: accent }]} />
       </View>
       <View style={styles.rowBetween}>
-        <Text style={styles.goalMetricSub}>{Math.max(Math.round((target - current) / 250), 1)} dias to go</Text>
+        <Text style={styles.goalMetricSub}>{statusLabel}</Text>
         <Text style={styles.goalMetricSub}>{Math.round(progress * 100)}%</Text>
       </View>
     </View>
@@ -4140,10 +4239,10 @@ function GoalsOverviewCard({
       <View style={styles.goalsOverviewWrap}>
         <View style={styles.rowBetween}>
         <Text style={styles.goalsOverviewTitle}>Metas</Text>
-        <Pressable style={styles.addGoalButton}>
+        <View style={styles.addGoalButton}>
           <Ionicons name="add" size={14} color={palette.id === 'dark' ? palette.background : '#FFFFFF'} />
           <Text style={styles.addGoalText}>Nova meta</Text>
-        </Pressable>
+        </View>
       </View>
       <View style={styles.goalsBalancePill}>
         <Text style={styles.goalsBalanceText}>{total}</Text>
@@ -5046,6 +5145,11 @@ function createStyles(palette: ThemePalette) {
     backgroundColor: palette.id === 'dark' ? palette.surfaceSoft : '#FFFFFF',
     borderWidth: 1,
     borderColor: palette.border,
+  },
+  goalContributionForm: {
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
   },
   goalListTitleWrap: {
     flexDirection: 'row',
