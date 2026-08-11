@@ -587,6 +587,7 @@ export function NorteApp() {
   const [movementCategoryFilter, setMovementCategoryFilter] = useState<MovementCategoryFilter>('all');
   const [movementPeriodFilter, setMovementPeriodFilter] = useState<MovementPeriodFilter>('all');
   const [movementAccountFilter, setMovementAccountFilter] = useState('all');
+  const [movementCardFilter, setMovementCardFilter] = useState('all');
   const [movementSort, setMovementSort] = useState<MovementSort>('newest');
   const [forecastMode, setForecastMode] = useState<ForecastMode>('normal');
   const [movementSearch, setMovementSearch] = useState('');
@@ -968,6 +969,7 @@ export function NorteApp() {
             (movementContextFilter === 'all' || movement.context === movementContextFilter) &&
             (movementCategoryFilter === 'all' || (movement.category ?? 'Outros') === movementCategoryFilter) &&
             (movementAccountFilter === 'all' || movement.walletAccountId === movementAccountFilter) &&
+            (movementCardFilter === 'all' || movement.cardId === movementCardFilter) &&
             isMovementInPeriod(movement.createdAt, movementPeriodFilter)
           );
         },
@@ -3205,6 +3207,7 @@ export function NorteApp() {
     setMovementCategoryFilter('all');
     setMovementPeriodFilter('all');
     setMovementAccountFilter('all');
+    setMovementCardFilter('all');
     setMovementSort('newest');
     setMovementSearch('');
   };
@@ -4088,6 +4091,15 @@ export function NorteApp() {
                           onPress={() => setMovementAccountFilter(account.id)}
                         />
                       ))}
+                    </View>
+                  </View>
+                ) : null}
+                {cardState.length > 0 ? (
+                  <View style={styles.selectionBlock}>
+                    <Text style={styles.mutedText}>Cartão</Text>
+                    <View style={styles.pillRow}>
+                      <Pill label="Todos" selected={movementCardFilter === 'all'} onPress={() => setMovementCardFilter('all')} />
+                      {cardState.map((card) => <Pill key={card.id} label={card.name} selected={movementCardFilter === card.id} onPress={() => setMovementCardFilter(card.id)} />)}
                     </View>
                   </View>
                 ) : null}
