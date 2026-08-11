@@ -819,6 +819,30 @@ export async function deleteWalletCard(session: Session, cardId: string) {
   }
 }
 
+export async function payCardInvoice(session: Session, input: { cardId: string; walletAccountId: string; amount: number; paidAt: string }) {
+  const client = requireSupabase();
+  const { data: card, error: cardError } = await client
+    .from('cards')
+    .select('used_amount')
+    .eq('user_id', session.user.id)
+    .eq('id', input.cardId)
+    .single();
+  if (cardError || !card) throw new Error(cardError?.message || 'Cartão não encontrado.');
+  if (input.amount > Number(card.used_amount) + 0.001) throw new Error('O pagamento não pode ser maior que a fatura atual.');
+
+  const { error: paymentError } = await client.from('card_payments').insert({
+    user_id: session.user.id,
+    card_id: input.cardId,
+    wallet_account_id: input.walletAccountId,
+    amount: input.amount,
+    paid_at: input.paidAt,
+  });
+  if (paymentError) throw new Error(paymentError.message);
+
+  await updateCardUsedAmount(input.cardId, -input.amount);
+  await updateWalletBalance(input.walletAccountId, -input.amount);
+}
+
 export async function createGoal(session: Session, input: GoalInput) {
   const client = requireSupabase();
   const { data, error } = await client

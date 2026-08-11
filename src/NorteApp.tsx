@@ -73,6 +73,7 @@ import {
   createMovement,
   createFinancialCategory,
   createFinancialConnection,
+  payCardInvoice,
   createGoal,
   createScheduledBill,
   createWalletAccount,
@@ -169,6 +170,11 @@ type CategoryFormState = {
 type ConnectionFormState = {
   institutionName: string;
   linkedAccountId: string;
+};
+type CardPaymentFormState = {
+  cardId: string;
+  walletAccountId: string;
+  amount: string;
 };
 
 type MovementTypeFilter = 'all' | 'income' | 'expense';
@@ -289,6 +295,7 @@ const categoryIconOptions = ['pricetag-outline', 'restaurant-outline', 'car-outl
 const categoryColorOptions = ['#111111', '#21C45A', '#FF8A00', '#5B8CFF', '#FFD84D', '#EF4444'];
 const defaultCategoryForm: CategoryFormState = { name: '', icon: 'pricetag-outline', color: '#5B8CFF', context: null };
 const defaultConnectionForm: ConnectionFormState = { institutionName: '', linkedAccountId: '' };
+const defaultCardPaymentForm: CardPaymentFormState = { cardId: '', walletAccountId: '', amount: '' };
 
 function sumAmounts(items: Array<{ amount: number }>) {
   return items.reduce((total, item) => total + item.amount, 0);
@@ -566,6 +573,8 @@ export function NorteApp() {
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [showConnectionForm, setShowConnectionForm] = useState(false);
   const [connectionForm, setConnectionForm] = useState<ConnectionFormState>(defaultConnectionForm);
+  const [cardPaymentForm, setCardPaymentForm] = useState<CardPaymentFormState>(defaultCardPaymentForm);
+  const [isPayingCard, setIsPayingCard] = useState(false);
   const [movementTypeFilter, setMovementTypeFilter] = useState<MovementTypeFilter>('all');
   const [movementContextFilter, setMovementContextFilter] = useState<MovementContextFilter>('all');
   const [movementCategoryFilter, setMovementCategoryFilter] = useState<MovementCategoryFilter>('all');
@@ -2758,6 +2767,39 @@ export function NorteApp() {
     setActiveTab('wallet');
   };
 
+  const handlePayCardInvoice = async () => {
+    if (isPayingCard) return;
+    const amount = parseCurrencyInput(cardPaymentForm.amount);
+    const card = cardState.find((item) => item.id === cardPaymentForm.cardId);
+    const account = activeAccounts.find((item) => item.id === cardPaymentForm.walletAccountId);
+    if (!card || !account || !Number.isFinite(amount) || amount <= 0) {
+      showNotice('Confira o pagamento', 'Escolha o cartão, a conta de pagamento e um valor válido.');
+      return;
+    }
+    if (amount > card.used) {
+      showNotice('Valor acima da fatura', 'O pagamento não pode ser maior que a fatura atual.');
+      return;
+    }
+    if (amount > account.balance) {
+      showNotice('Saldo insuficiente', 'Escolha outra conta ou faça um pagamento parcial.');
+      return;
+    }
+    setIsPayingCard(true);
+    setCardState((current) => current.map((item) => item.id === card.id ? { ...item, used: Math.max(item.used - amount, 0) } : item));
+    setAccountState((current) => current.map((item) => item.id === account.id ? { ...item, balance: item.balance - amount } : item));
+    setCardPaymentForm(defaultCardPaymentForm);
+    if (session && supabase) {
+      try {
+        await payCardInvoice(session, { cardId: card.id, walletAccountId: account.id, amount, paidAt: new Date().toISOString() });
+      } catch (error) {
+        setCardState((current) => current.map((item) => item.id === card.id ? card : item));
+        setAccountState((current) => current.map((item) => item.id === account.id ? account : item));
+        showNotice('Não foi possível pagar a fatura', error instanceof Error ? error.message : 'Tente novamente.');
+      }
+    }
+    setIsPayingCard(false);
+  };
+
   const handleDeleteCard = async (cardId: string) => {
     setCardState((current) => current.filter((item) => item.id !== cardId));
 
@@ -4035,6 +4077,23 @@ export function NorteApp() {
                       );
                     })}
                   </View>
+                </Card>
+              ) : null}
+
+              {cardState.some((card) => card.used > 0) ? (
+                <Card>
+                  <View style={styles.rowBetween}>
+                    <View><Text style={styles.cardTitle}>Pagar fatura</Text><Text style={styles.mutedText}>Você pode pagar total ou parcialmente.</Text></View>
+                    <Ionicons name="card-outline" size={20} color={palette.text} />
+                  </View>
+                  <View style={styles.pillRow}>
+                    {cardState.filter((card) => card.used > 0).map((card) => <Pill key={card.id} label={`${card.name} ${currency.format(card.used)}`} selected={cardPaymentForm.cardId === card.id} onPress={() => setCardPaymentForm((current) => ({ ...current, cardId: card.id, amount: current.cardId === card.id ? current.amount : String(card.used) }))} />)}
+                  </View>
+                  <View style={styles.pillRow}>
+                    {activeAccounts.map((account) => <Pill key={account.id} label={account.name} selected={cardPaymentForm.walletAccountId === account.id} onPress={() => setCardPaymentForm((current) => ({ ...current, walletAccountId: account.id }))} />)}
+                  </View>
+                  <TextInput value={cardPaymentForm.amount} onChangeText={(amount) => setCardPaymentForm((current) => ({ ...current, amount }))} placeholder="Valor do pagamento" keyboardType="decimal-pad" placeholderTextColor={palette.textMuted} style={styles.field} />
+                  <Pressable style={[styles.primaryButtonCompact, isPayingCard && styles.primaryButtonDisabled]} onPress={() => void handlePayCardInvoice()} disabled={isPayingCard}><Text style={styles.primaryButtonText}>{isPayingCard ? 'Registrando...' : 'Confirmar pagamento'}</Text></Pressable>
                 </Card>
               ) : null}
 
