@@ -63,6 +63,8 @@ function serializeFinancialContext(context: AssistantTurnRequest['financialConte
     `Contas futuras: ${context.upcomingBillsCount} no total de R$ ${context.upcomingBillsTotal.toFixed(2)}`,
     `Contas vencidas: ${context.overdueBillsCount}`,
     `Categorias disponíveis: ${context.availableCategories.join(', ') || 'Outros'}`,
+    `Cartoes: ${context.creditCards.length > 0 ? context.creditCards.map((card) => `${card.name} (${card.isBusiness ? 'negocio' : 'pessoal'}): fatura R$ ${card.invoiceAmount.toFixed(2)}, limite livre R$ ${card.availableLimit.toFixed(2)}, fecha dia ${card.closingDay}, vence dia ${card.dueDay}`).join(' | ') : 'Sem cartoes cadastrados.'}`,
+    `Conexoes financeiras registradas: ${context.financialConnectionsCount}`,
     `Despesas deste mes por categoria: ${context.categorySpending.length > 0 ? context.categorySpending.map((item) => `${item.category}: R$ ${item.amount.toFixed(2)} (${item.movementCount} itens)`).join(', ') : 'Sem despesas categorizadas neste mes.'}`,
     `Previsao para 30 dias: saldo final estimado de R$ ${context.forecastEndBalance.toFixed(2)}, menor saldo de R$ ${context.forecastLowestBalance.toFixed(2)}${context.forecastRiskDate ? `, com risco em ${context.forecastRiskDate}` : ', sem risco de saldo negativo no cenario atual'}.`,
   ].join('\n');

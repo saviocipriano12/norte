@@ -1914,6 +1914,16 @@ export function NorteApp() {
           forecastLowestBalance: cashForecast.lowestBalance,
           forecastRiskDate: cashForecast.riskDate,
           availableCategories: categoryNames,
+          creditCards: cardState.map((card) => ({
+            name: card.name,
+            invoiceAmount: card.used,
+            limit: card.limit,
+            availableLimit: Math.max(card.limit - card.used, 0),
+            closingDay: card.closingDay ?? 8,
+            dueDay: card.dueDay ?? 15,
+            isBusiness: Boolean(card.isBusiness),
+          })),
+          financialConnectionsCount: connectionState.length,
         },
       }, session?.access_token);
 

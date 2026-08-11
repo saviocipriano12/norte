@@ -131,6 +131,10 @@ const assistantTurnRequestSchema = z.object({
       forecastLowestBalance: z.number(),
       forecastRiskDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
       availableCategories: z.array(z.string().min(1).max(48)).max(40),
+      creditCards: z.array(z.object({
+        name: z.string().min(1), invoiceAmount: z.number().min(0), limit: z.number().min(0), availableLimit: z.number().min(0), closingDay: z.number().int().min(1).max(28), dueDay: z.number().int().min(1).max(28), isBusiness: z.boolean(),
+      })).max(20),
+      financialConnectionsCount: z.number().int().min(0),
     })
     .optional(),
 });

@@ -19,6 +19,16 @@ export type AssistantFinancialContext = {
   forecastLowestBalance: number;
   forecastRiskDate: string | null;
   availableCategories: string[];
+  creditCards: Array<{
+    name: string;
+    invoiceAmount: number;
+    limit: number;
+    availableLimit: number;
+    closingDay: number;
+    dueDay: number;
+    isBusiness: boolean;
+  }>;
+  financialConnectionsCount: number;
 };
 
 export type AssistantTurnRequest = {
