@@ -229,6 +229,7 @@ const goalAccentPalette = ['#111111', '#21C45A', '#FF8A00', '#5B8CFF', '#FFD84D'
 const assistantPromptSuggestions = [
   'Organize meu dia financeiro',
   'Quanto posso gastar hoje?',
+  'Minha fatura esta alta?',
   'O que vence esta semana?',
 ];
 const styleCache = new Map<ThemeMode, ReturnType<typeof createStyles>>();
