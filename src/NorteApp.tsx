@@ -3450,6 +3450,8 @@ export function NorteApp() {
 
               <CashForecastCard forecast={cashForecast} mode={forecastMode} onChangeMode={setForecastMode} />
 
+              <CreditInvoiceSummaryCard cards={cardState} onPress={() => setActiveTab('wallet')} />
+
               <Card variant="soft">
                 <View style={styles.rowBetween}>
                   <View>
@@ -4970,6 +4972,27 @@ function GuidanceCard({
         <Text style={styles.guidanceDescription}>{description}</Text>
       </View>
       <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />
+    </Pressable>
+  );
+}
+
+function CreditInvoiceSummaryCard({ cards, onPress }: { cards: WalletCard[]; onPress: () => void }) {
+  const openCards = cards.filter((card) => card.used > 0);
+  if (openCards.length === 0) return null;
+  const invoice = openCards.reduce((total, card) => total + card.used, 0);
+  const mostUsed = [...openCards].sort((left, right) => right.used / right.limit - left.used / left.limit)[0];
+  const percentage = Math.round((mostUsed.used / mostUsed.limit) * 100);
+  return (
+    <Pressable onPress={onPress} style={styles.invoiceSummaryCard}>
+      <View style={styles.rowBetween}>
+        <View><Text style={styles.cardEyebrow}>Cartões de crédito</Text><Text style={styles.cardTitle}>Fatura em aberto</Text></View>
+        <Ionicons name="card-outline" size={21} color="#FFFFFF" />
+      </View>
+      <Text style={styles.invoiceSummaryValue}>{currency.format(invoice)}</Text>
+      <View style={styles.invoiceSummaryFooter}>
+        <Text style={styles.invoiceSummaryText}>{mostUsed.name}: {percentage}% do limite</Text>
+        <Text style={styles.invoiceSummaryText}>Vence dia {mostUsed.dueDay ?? 15}</Text>
+      </View>
     </Pressable>
   );
 }
@@ -6818,6 +6841,28 @@ function createStyles(palette: ThemePalette) {
     padding: spacing.lg,
     borderRadius: radius.lg,
     backgroundColor: '#111111',
+  },
+  invoiceSummaryCard: {
+    gap: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: '#111111',
+  },
+  invoiceSummaryValue: {
+    color: '#FFFFFF',
+    fontSize: 28,
+    fontWeight: '800',
+  },
+  invoiceSummaryFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  invoiceSummaryText: {
+    flex: 1,
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 12,
+    fontWeight: '600',
   },
   cashForecastEyebrow: {
     color: '#AAAAAA',
