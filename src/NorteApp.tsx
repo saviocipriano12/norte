@@ -1640,6 +1640,7 @@ export function NorteApp() {
         selectedPain,
         financialContext: {
           personalBalance,
+          today: new Date().toISOString().slice(0, 10),
           businessBalance,
           spendableToday,
           upcomingBillsTotal,
@@ -1658,8 +1659,9 @@ export function NorteApp() {
       if (remoteTurn) {
         persistedMessages = remoteTurn.persistedMessages;
         if (remoteTurn.persistedDrafts.length > 0) {
-          persistedDrafts = remoteTurn.persistedDrafts.map((draft) => ({
+          persistedDrafts = remoteTurn.persistedDrafts.map((draft, index) => ({
             ...draft,
+            occurredAt: result.drafts[index]?.occurredAt,
             walletAccountId: pickAccountForContext(accountState, draft.context)?.id ?? null,
           }));
         }

@@ -3,6 +3,7 @@ import type { DraftEntry, Message, Movement } from './mockData';
 export type AssistantProfile = 'personal' | 'freelancer' | 'business';
 
 export type AssistantFinancialContext = {
+  today: string;
   personalBalance: number;
   businessBalance: number;
   spendableToday: number;

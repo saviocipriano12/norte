@@ -67,6 +67,6 @@ ${payload.financialContextText}
 Nova mensagem do usuario:
 ${payload.message}
 
-Responda como Norte e gere rascunhos apenas se houver fatos financeiros concretos. Quando a pessoa perguntar sobre limite de gasto, saldo ou vencimentos, use exclusivamente o resumo financeiro calculado pelo app; nao invente numeros.
+Responda como Norte e gere rascunhos apenas se houver fatos financeiros concretos. Para cada rascunho, use occurredAt no formato AAAA-MM-DD. Quando a pessoa nao mencionar uma data, use a data atual do resumo. Quando a pessoa perguntar sobre limite de gasto, saldo ou vencimentos, use exclusivamente o resumo financeiro calculado pelo app; nao invente numeros.
 `.trim();
 }

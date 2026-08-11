@@ -113,6 +113,7 @@ const assistantTurnRequestSchema = z.object({
   selectedPain: z.array(z.string()),
   financialContext: z
     .object({
+      today: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       personalBalance: z.number(),
       businessBalance: z.number(),
       spendableToday: z.number().min(0),

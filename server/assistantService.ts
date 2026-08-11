@@ -13,6 +13,7 @@ const norteDraftSchema = z.object({
   context: z.enum(['Pessoal', 'Negocio', 'Compartilhado']).nullable(),
   question: z.string().nullable(),
   note: z.string().min(1),
+  occurredAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
 });
 
 const norteResponseSchema = z.object({
@@ -54,6 +55,7 @@ function serializeFinancialContext(context: AssistantTurnRequest['financialConte
   }
 
   return [
+    `Data atual: ${context.today}`,
     `Saldo pessoal atual: R$ ${context.personalBalance.toFixed(2)}`,
     `Caixa atual do negocio: R$ ${context.businessBalance.toFixed(2)}`,
     `Disponivel para gastar hoje: R$ ${context.spendableToday.toFixed(2)}`,
@@ -84,6 +86,7 @@ function normalizeDrafts(drafts: Array<z.infer<typeof norteDraftSchema>>): Draft
               ? 'Essa entrada e pessoal ou do negocio?'
               : 'Esse gasto foi pessoal, do negocio ou compartilhado?',
         note: draft.note.trim() || 'Movimento identificado, aguardando sua revisao.',
+        occurredAt: draft.occurredAt ?? undefined,
       } satisfies DraftEntry;
     });
 }
