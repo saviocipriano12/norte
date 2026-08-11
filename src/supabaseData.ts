@@ -42,6 +42,10 @@ type CardInput = {
   limit: number;
   used: number;
   walletAccountId?: string | null;
+  closingDay?: number;
+  dueDay?: number;
+  brand?: string;
+  isBusiness?: boolean;
 };
 
 type FinancialCategoryInput = Pick<FinancialCategory, 'name' | 'icon' | 'color' | 'context'>;
@@ -121,6 +125,10 @@ function cardRowToApp(card: {
   limit_amount: number | string;
   used_amount: number | string;
   wallet_account_id: string | null;
+  closing_day?: number | null;
+  due_day?: number | null;
+  brand?: string | null;
+  is_business?: boolean | null;
 }) {
   return {
     id: card.id,
@@ -128,6 +136,10 @@ function cardRowToApp(card: {
     limit: Number(card.limit_amount),
     used: Number(card.used_amount),
     walletAccountId: card.wallet_account_id,
+    closingDay: Number(card.closing_day ?? 8),
+    dueDay: Number(card.due_day ?? 15),
+    brand: card.brand ?? 'Credito',
+    isBusiness: Boolean(card.is_business),
   } satisfies WalletCard;
 }
 
@@ -561,6 +573,19 @@ async function updateWalletBalance(accountId: string, delta: number) {
     .eq('id', accountId);
 }
 
+async function updateCardUsedAmount(cardId: string, delta: number) {
+  const client = requireSupabase();
+  const { data, error } = await client.from('cards').select('used_amount').eq('id', cardId).single();
+  if (error || !data) {
+    throw new Error(error?.message || 'Nao foi possivel atualizar a fatura do cartao.');
+  }
+  const nextUsed = Math.max(Number(data.used_amount) + delta, 0);
+  const { error: updateError } = await client.from('cards').update({ used_amount: nextUsed }).eq('id', cardId);
+  if (updateError) {
+    throw new Error(updateError.message);
+  }
+}
+
 function movementBalanceDelta(type: Movement['type'], amount: number) {
   return type === 'income' ? amount : -amount;
 }
@@ -703,6 +728,10 @@ export async function createWalletCard(session: Session, input: CardInput) {
       name: input.name,
       limit_amount: input.limit,
       used_amount: input.used,
+      closing_day: input.closingDay ?? 8,
+      due_day: input.dueDay ?? 15,
+      brand: input.brand ?? 'Credito',
+      is_business: Boolean(input.isBusiness),
     })
     .select('*')
     .single();
@@ -723,6 +752,10 @@ export async function updateWalletCard(session: Session, cardId: string, input: 
       name: input.name,
       limit_amount: input.limit,
       used_amount: input.used,
+      closing_day: input.closingDay ?? 8,
+      due_day: input.dueDay ?? 15,
+      brand: input.brand ?? 'Credito',
+      is_business: Boolean(input.isBusiness),
     })
     .eq('user_id', session.user.id)
     .eq('id', cardId)
@@ -925,7 +958,9 @@ export async function createMovement(session: Session, input: MovementInput) {
     throw new Error(error?.message || 'Nao foi possivel criar o movimento.');
   }
 
-  if (resolvedWalletAccountId) {
+  if (input.cardId && input.type === 'expense') {
+    await updateCardUsedAmount(input.cardId, input.amount);
+  } else if (resolvedWalletAccountId) {
     await updateWalletBalance(resolvedWalletAccountId, movementBalanceDelta(input.type, input.amount));
   }
 
@@ -961,7 +996,7 @@ export async function updateMovement(session: Session, movementId: string, input
   const client = requireSupabase();
   const { data: existing, error: existingError } = await client
     .from('transactions')
-    .select('wallet_account_id, amount, type')
+    .select('wallet_account_id, card_id, amount, type')
     .eq('user_id', session.user.id)
     .eq('id', movementId)
     .single();
@@ -998,11 +1033,16 @@ export async function updateMovement(session: Session, movementId: string, input
   const previousDelta = movementBalanceDelta(existing.type as Movement['type'], Number(existing.amount));
   const nextDelta = movementBalanceDelta(input.type, input.amount);
 
-  if (previousWalletAccountId) {
+  const previousCardId = existing.card_id as string | null;
+  if (previousCardId && existing.type === 'expense') {
+    await updateCardUsedAmount(previousCardId, -Number(existing.amount));
+  } else if (previousWalletAccountId) {
     await updateWalletBalance(previousWalletAccountId, -previousDelta);
   }
 
-  if (resolvedWalletAccountId) {
+  if (input.cardId && input.type === 'expense') {
+    await updateCardUsedAmount(input.cardId, input.amount);
+  } else if (resolvedWalletAccountId) {
     await updateWalletBalance(resolvedWalletAccountId, nextDelta);
   }
 
@@ -1035,7 +1075,7 @@ export async function deleteMovement(session: Session, movementId: string) {
   const client = requireSupabase();
   const { data: existing, error: fetchError } = await client
     .from('transactions')
-    .select('wallet_account_id, amount, type')
+    .select('wallet_account_id, card_id, amount, type')
     .eq('user_id', session.user.id)
     .eq('id', movementId)
     .single();
@@ -1050,7 +1090,9 @@ export async function deleteMovement(session: Session, movementId: string) {
     throw new Error(error.message);
   }
 
-  if (existing.wallet_account_id) {
+  if (existing.card_id && existing.type === 'expense') {
+    await updateCardUsedAmount(existing.card_id as string, -Number(existing.amount));
+  } else if (existing.wallet_account_id) {
     await updateWalletBalance(
       existing.wallet_account_id as string,
       -movementBalanceDelta(existing.type as Movement['type'], Number(existing.amount)),

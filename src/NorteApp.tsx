@@ -137,6 +137,10 @@ type CardFormState = {
   limit: string;
   used: string;
   walletAccountId: string;
+  closingDay: string;
+  dueDay: string;
+  brand: string;
+  isBusiness: boolean;
 };
 
 type GoalFormState = {
@@ -253,6 +257,10 @@ const defaultCardForm: CardFormState = {
   limit: '',
   used: '',
   walletAccountId: '',
+  closingDay: '8',
+  dueDay: '15',
+  brand: 'Credito',
+  isBusiness: false,
 };
 
 const defaultGoalForm: GoalFormState = {
@@ -2300,13 +2308,33 @@ export function NorteApp() {
       if (editingMovementId) {
         setMovements((current) => current.map((item) => (item.id === editingMovementId ? movement : item)));
         if (previousMovement) {
-          setAccountState((current) =>
-            applyMovementToAccounts(applyMovementToAccounts(current, previousMovement, -1), movement),
-          );
+          if (previousMovement.cardId || movement.cardId) {
+            setCardState((current) =>
+              current.map((card) => {
+                let used = card.used;
+                if (previousMovement.cardId === card.id && previousMovement.type === 'expense') used -= previousMovement.amount;
+                if (movement.cardId === card.id && movement.type === 'expense') used += movement.amount;
+                return { ...card, used: Math.max(used, 0) };
+              }),
+            );
+            if (!previousMovement.cardId && !movement.cardId) {
+              setAccountState((current) => applyMovementToAccounts(applyMovementToAccounts(current, previousMovement, -1), movement));
+            } else if (!previousMovement.cardId) {
+              setAccountState((current) => applyMovementToAccounts(current, previousMovement, -1));
+            } else if (!movement.cardId) {
+              setAccountState((current) => applyMovementToAccounts(current, movement));
+            }
+          } else {
+            setAccountState((current) => applyMovementToAccounts(applyMovementToAccounts(current, previousMovement, -1), movement));
+          }
         }
       } else {
         setMovements((current) => [movement, ...current]);
-        setAccountState((current) => applyMovementToAccounts(current, movement));
+        if (movement.cardId && movement.type === 'expense') {
+          setCardState((current) => current.map((card) => (card.id === movement.cardId ? { ...card, used: card.used + movement.amount } : card)));
+        } else {
+          setAccountState((current) => applyMovementToAccounts(current, movement));
+        }
       }
 
       setManualEntry({
@@ -2614,6 +2642,8 @@ export function NorteApp() {
   const handleSaveCard = async () => {
     const limit = parseCurrencyInput(cardForm.limit);
     const used = parseCurrencyInput(cardForm.used);
+    const closingDay = Number(cardForm.closingDay);
+    const dueDay = Number(cardForm.dueDay);
 
     if (
       !cardForm.name.trim() ||
@@ -2621,9 +2651,11 @@ export function NorteApp() {
       limit <= 0 ||
       !Number.isFinite(used) ||
       used < 0 ||
-      used > limit
+      used > limit ||
+      !Number.isInteger(closingDay) || closingDay < 1 || closingDay > 28 ||
+      !Number.isInteger(dueDay) || dueDay < 1 || dueDay > 28
     ) {
-      showNotice('Confira os dados do cartao', 'Informe um nome, um limite maior que zero e um valor utilizado entre zero e o limite.');
+      showNotice('Confira os dados do cartao', 'Informe nome, limite, fatura atual e dias de fechamento e vencimento entre 1 e 28.');
       return;
     }
 
@@ -2633,6 +2665,10 @@ export function NorteApp() {
       limit,
       used,
       walletAccountId: cardForm.walletAccountId || null,
+      closingDay,
+      dueDay,
+      brand: cardForm.brand.trim() || 'Credito',
+      isBusiness: cardForm.isBusiness,
     };
 
     setCardState((current) =>
@@ -2672,6 +2708,10 @@ export function NorteApp() {
       limit: String(card.limit),
       used: String(card.used),
       walletAccountId: card.walletAccountId ?? '',
+      closingDay: String(card.closingDay ?? 8),
+      dueDay: String(card.dueDay ?? 15),
+      brand: card.brand ?? 'Credito',
+      isBusiness: Boolean(card.isBusiness),
     });
     setActiveTab('wallet');
   };
@@ -3768,7 +3808,7 @@ export function NorteApp() {
                     </View>
                     {cardState.length > 0 ? (
                       <View style={styles.selectionBlock}>
-                        <Text style={styles.mutedText}>Cartao opcional</Text>
+                        <Text style={styles.mutedText}>Forma de pagamento</Text>
                         <View style={styles.pillRow}>
                           <Pill
                             label="Sem cartao"
@@ -3784,6 +3824,7 @@ export function NorteApp() {
                             />
                           ))}
                         </View>
+                        {manualEntry.cardId ? <Text style={styles.mutedText}>Compra no crédito entra na fatura; o saldo da conta só muda ao pagar a fatura.</Text> : null}
                       </View>
                     ) : null}
                     <Pressable
@@ -4092,6 +4133,34 @@ export function NorteApp() {
                       placeholderTextColor={palette.textMuted}
                       style={styles.field}
                     />
+                    <TextInput
+                      value={cardForm.brand}
+                      onChangeText={(value) => setCardForm((current) => ({ ...current, brand: value }))}
+                      placeholder="Bandeira (ex.: Visa, Mastercard)"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <View style={styles.pillRow}>
+                      <TextInput
+                        value={cardForm.closingDay}
+                        onChangeText={(value) => setCardForm((current) => ({ ...current, closingDay: value }))}
+                        placeholder="Fecha dia"
+                        keyboardType="number-pad"
+                        placeholderTextColor={palette.textMuted}
+                        style={[styles.field, styles.cardDayField]}
+                      />
+                      <TextInput
+                        value={cardForm.dueDay}
+                        onChangeText={(value) => setCardForm((current) => ({ ...current, dueDay: value }))}
+                        placeholder="Vence dia"
+                        keyboardType="number-pad"
+                        placeholderTextColor={palette.textMuted}
+                        style={[styles.field, styles.cardDayField]}
+                      />
+                    </View>
+                    <View style={styles.pillRow}>
+                      <Pill label={cardForm.isBusiness ? 'Cartao do negocio' : 'Cartao pessoal'} selected onPress={() => setCardForm((current) => ({ ...current, isBusiness: !current.isBusiness }))} />
+                    </View>
                     <View style={styles.selectionBlock}>
                       <Text style={styles.mutedText}>Vincular a conta</Text>
                       <View style={styles.pillRow}>
@@ -4127,8 +4196,9 @@ export function NorteApp() {
                             <Text style={styles.mutedText}>{currency.format(remaining)} livre</Text>
                           </View>
                           <Text style={styles.mutedText}>
-                            {linkedAccount ? `Vinculado a ${linkedAccount.name}` : 'Sem conta vinculada'}
+                            {card.brand ?? 'Credito'} / fecha dia {card.closingDay ?? 8} / vence dia {card.dueDay ?? 15}
                           </Text>
+                          <Text style={styles.mutedText}>{linkedAccount ? `Pagamento pela conta ${linkedAccount.name}` : 'Defina a conta para pagar a fatura'}</Text>
                           <View style={styles.progressTrack}>
                             <View
                               style={[
@@ -4872,7 +4942,8 @@ function WalletPassCard({
       <View style={styles.rowBetween}>
         <View>
           <Text style={styles.walletPassLabel}>{linkedAccountName ? `Conta ${linkedAccountName}` : 'Sem conta vinculada'}</Text>
-          <Text style={styles.walletPassValue}>{remaining} livre</Text>
+          <Text style={styles.walletPassValue}>Fatura {currency.format(card.used)}</Text>
+          <Text style={styles.walletPassLabel}>{remaining} livre / fecha {card.closingDay ?? 8} / vence {card.dueDay ?? 15}</Text>
         </View>
         <View style={styles.walletPassActions}>
           <Pressable onPress={onEdit}>
@@ -6942,6 +7013,9 @@ function createStyles(palette: ThemePalette) {
     borderRadius: radius.sm,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  cardDayField: {
+    flex: 1,
   },
   themeOptions: {
     flexDirection: 'row',

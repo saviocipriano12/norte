@@ -101,6 +101,10 @@ export type WalletCard = {
   limit: number;
   used: number;
   walletAccountId?: string | null;
+  closingDay?: number;
+  dueDay?: number;
+  brand?: string;
+  isBusiness?: boolean;
 };
 
 export type UpcomingBill = {
@@ -238,6 +242,9 @@ export const initialCards: WalletCard[] = [
     limit: 12000,
     used: 3240,
     walletAccountId: 'a1',
+    closingDay: 8,
+    dueDay: 15,
+    brand: 'Visa',
   },
   {
     id: 'c2',
@@ -245,6 +252,10 @@ export const initialCards: WalletCard[] = [
     limit: 6000,
     used: 1280,
     walletAccountId: 'a2',
+    closingDay: 18,
+    dueDay: 25,
+    brand: 'Mastercard',
+    isBusiness: true,
   },
 ];
 

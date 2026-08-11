@@ -44,6 +44,20 @@ create table if not exists public.cards (
   name text not null,
   limit_amount numeric(14,2) not null default 0,
   used_amount numeric(14,2) not null default 0,
+  closing_day integer not null default 8 check (closing_day between 1 and 28),
+  due_day integer not null default 15 check (due_day between 1 and 28),
+  brand text not null default 'Credito',
+  is_business boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.card_payments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  card_id uuid not null references public.cards(id) on delete cascade,
+  wallet_account_id uuid references public.wallet_accounts(id) on delete set null,
+  amount numeric(14,2) not null check (amount > 0),
+  paid_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
 
@@ -170,6 +184,7 @@ alter table public.profiles enable row level security;
 alter table public.business_profiles enable row level security;
 alter table public.wallet_accounts enable row level security;
 alter table public.cards enable row level security;
+alter table public.card_payments enable row level security;
 alter table public.financial_categories enable row level security;
 alter table public.contacts enable row level security;
 alter table public.assistant_threads enable row level security;
@@ -186,6 +201,7 @@ create policy "profiles_update_own" on public.profiles for update using (auth.ui
 create policy "business_profiles_all_own" on public.business_profiles for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "wallet_accounts_all_own" on public.wallet_accounts for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "cards_all_own" on public.cards for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "card_payments_all_own" on public.card_payments for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "financial_categories_all_own" on public.financial_categories for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "contacts_all_own" on public.contacts for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "assistant_threads_all_own" on public.assistant_threads for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
