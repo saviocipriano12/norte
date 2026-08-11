@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { applyMovementToAccounts, inferOccurrenceDate, parseCurrencyInput, parseDraftCorrectionAmount, parseFinanceMessage } from '../src/financeEngine.ts';
+import { applyMovementToAccounts, inferOccurrenceDate, parseCurrencyInput, parseDraftCorrectionAmount, parseDraftCorrectionDate, parseFinanceMessage } from '../src/financeEngine.ts';
 import { initialAccounts } from '../src/mockData.ts';
 
 const result = parseFinanceMessage('gastei R$ 40,50 na padaria e recebi 1.250,75 do cliente');
@@ -15,6 +15,8 @@ assert.equal(parseCurrencyInput('R$ 2,40'), 2.4);
 assert.equal(parseDraftCorrectionAmount('Nao, foi R$ 90, nao R$ 80.'), 90);
 assert.equal(parseDraftCorrectionAmount('Pode colocar como despesa do negocio.'), null);
 assert.equal(inferOccurrenceDate('gastei ontem', new Date('2026-08-11T12:00:00Z')), '2026-08-10');
+assert.equal(inferOccurrenceDate('paguei na sexta', new Date('2026-08-11T12:00:00Z')), '2026-08-14');
+assert.equal(parseDraftCorrectionDate('na verdade foi ontem', new Date('2026-08-11T12:00:00Z')), '2026-08-10');
 
 const expense = {
   id: 'test-expense',

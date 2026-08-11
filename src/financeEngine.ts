@@ -199,10 +199,34 @@ export function inferOccurrenceDate(segment: string, referenceDate = new Date())
   const result = new Date(referenceDate);
   const normalized = normalizeText(segment);
   if (/\bontem\b/.test(normalized)) result.setDate(result.getDate() - 1);
+  if (/\bamanha\b/.test(normalized)) result.setDate(result.getDate() + 1);
   if (/\bmes que vem\b/.test(normalized)) result.setMonth(result.getMonth() + 1);
   const day = normalized.match(/\bdia\s+(\d{1,2})\b/);
   if (day) result.setDate(Number(day[1]));
+  const weekdays: Array<[RegExp, number]> = [
+    [/\bdomingo\b/, 0],
+    [/\bsegunda(?:-feira)?\b/, 1],
+    [/\bterca(?:-feira)?\b/, 2],
+    [/\bquarta(?:-feira)?\b/, 3],
+    [/\bquinta(?:-feira)?\b/, 4],
+    [/\bsexta(?:-feira)?\b/, 5],
+    [/\bsabado\b/, 6],
+  ];
+  const weekday = weekdays.find(([pattern]) => pattern.test(normalized));
+  if (weekday) {
+    const daysAhead = (weekday[1] - result.getDay() + 7) % 7;
+    result.setDate(result.getDate() + daysAhead);
+  }
   return `${result.getFullYear()}-${String(result.getMonth() + 1).padStart(2, '0')}-${String(result.getDate()).padStart(2, '0')}`;
+}
+
+export function parseDraftCorrectionDate(input: string, referenceDate = new Date()) {
+  const normalized = normalizeText(input);
+  if (!/\b(ontem|hoje|amanha|domingo|segunda|terca|quarta|quinta|sexta|sabado|dia\s+\d{1,2}|mes que vem)\b/.test(normalized)) {
+    return null;
+  }
+
+  return inferOccurrenceDate(input, referenceDate);
 }
 
 export function parseFinanceMessage(input: string) {

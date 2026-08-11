@@ -275,6 +275,7 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
       context: (draft.context as DraftEntry['context'] | null) ?? undefined,
       question: (draft.question as string | null) ?? undefined,
       note: draft.note as string,
+      occurredAt: (draft.occurred_at as string | null) ?? undefined,
       walletAccountId: null,
       cardId: null,
     })),
@@ -363,6 +364,7 @@ export async function persistAssistantTurn(
           context: draft.context ?? null,
           question: draft.question ?? null,
           note: draft.note,
+          occurred_at: draft.occurredAt ?? null,
           status: 'pending',
         })),
       )
@@ -380,6 +382,7 @@ export async function persistAssistantTurn(
       context: (draft.context as DraftEntry['context'] | null) ?? undefined,
       question: (draft.question as string | null) ?? undefined,
       note: draft.note as string,
+      occurredAt: (draft.occurred_at as string | null) ?? undefined,
     }));
   }
 
@@ -410,6 +413,18 @@ export async function updateRemoteDraftAmount(draftId: string, amount: number) {
       note: 'Valor corrigido, aguardando sua revisao.',
       updated_at: new Date().toISOString(),
     })
+    .eq('id', draftId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function updateRemoteDraftOccurredAt(draftId: string, occurredAt: string) {
+  const client = requireSupabase();
+  const { error } = await client
+    .from('transaction_drafts')
+    .update({ occurred_at: occurredAt, updated_at: new Date().toISOString() })
     .eq('id', draftId);
 
   if (error) {

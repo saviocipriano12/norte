@@ -25,6 +25,7 @@ import {
   movementBusinessWeight,
   parseCurrencyInput,
   parseDraftCorrectionAmount,
+  parseDraftCorrectionDate,
   parseFinanceMessage,
 } from './financeEngine';
 import { NorteOrb } from './NorteOrb';
@@ -81,6 +82,7 @@ import {
   persistConfirmedDrafts,
   updateMovement,
   updateRemoteDraftAmount,
+  updateRemoteDraftOccurredAt,
   updateRemoteDraftContext,
   updateGoal,
   updateScheduledBill,
@@ -1552,6 +1554,7 @@ export function NorteApp() {
     const pendingDraft = drafts.find((draft) => !draft.context);
     const contextReply = pendingQuestions === 1 ? inferContextReply(trimmed) : null;
     const correctedAmount = pendingDraft ? parseDraftCorrectionAmount(trimmed) : null;
+    const correctedDate = pendingDraft ? parseDraftCorrectionDate(trimmed) : null;
 
     if (pendingDraft && correctedAmount) {
       const reply = `Certo. Atualizei ${pendingDraft.title} para ${currency.format(correctedAmount)}. Revise o rascunho e confirme quando estiver tudo certo.`;
@@ -1571,6 +1574,44 @@ export function NorteApp() {
       if (session && supabase) {
         void updateRemoteDraftAmount(pendingDraft.id, correctedAmount).catch((error) =>
           setAssistantError(error instanceof Error ? `Corrigi o valor no app, mas nao consegui sincronizar: ${error.message}` : 'Corrigi o valor no app, mas nao consegui sincronizar.'),
+        );
+      }
+
+      if (options?.clearInput) {
+        setAssistantInput('');
+      }
+
+      setMessages((current) => [...current, createMessage('user', trimmed), createMessage('assistant', reply)]);
+      setLastSpeechText(reply);
+
+      if (options?.playTts) {
+        setAssistantMode('responding');
+        void playAssistantSpeech(reply);
+      } else if (options?.awaitRealtimeVoice) {
+        setAssistantMode('responding');
+      }
+
+      return response;
+    }
+
+    if (pendingDraft && correctedDate) {
+      const reply = `Certo. Atualizei a data de ${pendingDraft.title} para ${formatBillDue(correctedDate)}. Revise o rascunho e confirme quando estiver tudo certo.`;
+      const response: AssistantTurnResponse = {
+        assistantMessage: reply,
+        speechText: reply,
+        drafts: [],
+      };
+
+      setDrafts((current) =>
+        current.map((draft) =>
+          draft.id === pendingDraft.id
+            ? { ...draft, occurredAt: correctedDate, note: 'Data corrigida, aguardando sua revisao.' }
+            : draft,
+        ),
+      );
+      if (session && supabase) {
+        void updateRemoteDraftOccurredAt(pendingDraft.id, correctedDate).catch((error) =>
+          setAssistantError(error instanceof Error ? `Corrigi a data no app, mas nao consegui sincronizar: ${error.message}` : 'Corrigi a data no app, mas nao consegui sincronizar.'),
         );
       }
 
@@ -1698,7 +1739,7 @@ export function NorteApp() {
         if (remoteTurn.persistedDrafts.length > 0) {
           persistedDrafts = remoteTurn.persistedDrafts.map((draft, index) => ({
             ...draft,
-            occurredAt: result.drafts[index]?.occurredAt,
+            occurredAt: draft.occurredAt ?? result.drafts[index]?.occurredAt,
             walletAccountId: pickAccountForContext(accountState, draft.context)?.id ?? null,
           }));
         }
@@ -3275,10 +3316,10 @@ export function NorteApp() {
                 <Pressable
                   style={[
                     styles.primaryButton,
-                    (isConfirmingDrafts || drafts.some((draft) => !draft.context) || accountState.length === 0) && styles.primaryButtonDisabled,
+                    (isConfirmingDrafts || drafts.some((draft) => !draft.context) || activeAccounts.length === 0) && styles.primaryButtonDisabled,
                   ]}
                   onPress={() => void handleConfirmDrafts()}
-                  disabled={isConfirmingDrafts || drafts.length === 0 || drafts.some((draft) => !draft.context) || accountState.length === 0}
+                  disabled={isConfirmingDrafts || drafts.length === 0 || drafts.some((draft) => !draft.context) || activeAccounts.length === 0}
                 >
                   <Text style={styles.primaryButtonText}>
                     {isConfirmingDrafts ? 'Salvando lancamentos...' : 'Confirmar e salvar lancamentos'}
@@ -4588,7 +4629,8 @@ function DraftCard({
   onSelectAccount: (walletAccountId: string) => void;
   onRemove: () => void;
 }) {
-  const selectedAccount = accounts.find((account) => account.id === draft.walletAccountId);
+  const activeAccounts = accounts.filter((account) => !account.isArchived);
+  const selectedAccount = activeAccounts.find((account) => account.id === draft.walletAccountId);
 
   return (
     <View style={styles.draftCard}>
@@ -4596,6 +4638,7 @@ function DraftCard({
         <View style={styles.flexOne}>
           <Text style={styles.cardTitle}>{draft.title}</Text>
           <Text style={styles.mutedText}>{draft.note}</Text>
+          {draft.occurredAt ? <Text style={styles.mutedText}>Data: {formatBillDue(draft.occurredAt)}</Text> : null}
         </View>
         <Text style={draft.type === 'income' ? styles.amountPositive : styles.amountNegative}>
           {draft.type === 'income' ? '+' : '-'}
@@ -4618,7 +4661,7 @@ function DraftCard({
             Conta de destino{selectedAccount ? `: ${selectedAccount.name}` : ''}
           </Text>
           <View style={styles.pillRow}>
-            {accounts.map((account) => (
+            {activeAccounts.map((account) => (
               <Pill
                 key={account.id}
                 label={account.name}

@@ -25,6 +25,7 @@ function draftRowToApp(row: {
   context: string | null;
   question: string | null;
   note: string;
+  occurred_at?: string | null;
 }): DraftEntry {
   return {
     id: row.id,
@@ -34,6 +35,7 @@ function draftRowToApp(row: {
     context: (row.context as DraftEntry['context'] | null) ?? undefined,
     question: row.question ?? undefined,
     note: row.note,
+    occurredAt: row.occurred_at ?? undefined,
   };
 }
 
@@ -196,11 +198,12 @@ export async function syncAssistantTurnAdmin(input: {
           context: draft.context ?? null,
           question: draft.question ?? null,
           note: draft.note,
+          occurred_at: draft.occurredAt ?? null,
           status: 'pending',
           updated_at: new Date().toISOString(),
         })),
       )
-      .select('id, title, amount, type, context, question, note');
+      .select('id, title, amount, type, context, question, note, occurred_at');
 
     if (draftError) {
       throw new Error(draftError.message || 'Nao foi possivel salvar os rascunhos da Norte.');

@@ -4,3 +4,6 @@ alter table public.scheduled_bills
 
 alter table public.goals
   add column if not exists target_date date;
+
+alter table public.transaction_drafts
+  add column if not exists occurred_at date;

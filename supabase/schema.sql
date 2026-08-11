@@ -85,6 +85,7 @@ create table if not exists public.transaction_drafts (
   context public.entry_context,
   question text,
   note text not null,
+  occurred_at date,
   status public.draft_status not null default 'pending',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
