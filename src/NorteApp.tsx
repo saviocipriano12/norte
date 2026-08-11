@@ -3215,6 +3215,19 @@ export function NorteApp() {
 
               <Card variant="soft">
                 <View style={styles.rowBetween}>
+                  <View>
+                    <Text style={styles.cardTitle}>Ultimos movimentos</Text>
+                    <Text style={styles.mutedText}>O que entrou e saiu por ultimo</Text>
+                  </View>
+                  <Pressable onPress={() => setActiveTab('moves')}>
+                    <Text style={styles.inlineLink}>Ver todos</Text>
+                  </Pressable>
+                </View>
+                <RecentMovementsList movements={movements} />
+              </Card>
+
+              <Card variant="soft">
+                <View style={styles.rowBetween}>
                   <Text style={styles.cardTitle}>Suas metas</Text>
                   <Pressable onPress={() => setActiveTab('plan')}>
                     <Text style={styles.inlineLink}>Ver tudo</Text>
@@ -4873,6 +4886,40 @@ function UpcomingBillsList({ bills }: { bills: UpcomingBill[] }) {
   );
 }
 
+function RecentMovementsList({ movements }: { movements: Movement[] }) {
+  const recentMovements = [...movements]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, 4);
+
+  if (recentMovements.length === 0) {
+    return (
+      <View style={styles.emptyState}>
+        <Ionicons name="receipt-outline" size={22} color={palette.textMuted} />
+        <Text style={styles.bodyText}>Seus lancamentos recentes aparecerao aqui.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.recentMovementsList}>
+      {recentMovements.map((movement) => (
+        <View key={movement.id} style={styles.recentMovementRow}>
+          <View style={[styles.recentMovementIcon, movement.type === 'income' ? styles.recentMovementIconIncome : styles.recentMovementIconExpense]}>
+            <Ionicons name={movement.type === 'income' ? 'arrow-down-outline' : 'arrow-up-outline'} size={16} color={palette.text} />
+          </View>
+          <View style={styles.flexOne}>
+            <Text style={styles.bodyText}>{movement.title}</Text>
+            <Text style={styles.mutedText}>{formatMovementDate(movement.createdAt)} / {movement.category ?? 'Outros'}</Text>
+          </View>
+          <Text style={movement.type === 'income' ? styles.amountPositive : styles.amountNegative}>
+            {movement.type === 'income' ? '+' : '-'}{currency.format(movement.amount)}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function ModeButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={[styles.modeButton, active && styles.modeButtonActive]}>
@@ -6360,6 +6407,29 @@ function createStyles(palette: ThemePalette) {
   },
   upcomingBillIconOverdue: {
     backgroundColor: palette.id === 'dark' ? '#3A1A1A' : '#FEE2E2',
+  },
+  recentMovementsList: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  recentMovementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    minHeight: 44,
+  },
+  recentMovementIcon: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+  },
+  recentMovementIconIncome: {
+    backgroundColor: palette.id === 'dark' ? '#163524' : '#DCFCE7',
+  },
+  recentMovementIconExpense: {
+    backgroundColor: palette.id === 'dark' ? '#2C2520' : '#FFF1E5',
   },
   drawerBackdrop: {
     flex: 1,
