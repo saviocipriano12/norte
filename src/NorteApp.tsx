@@ -3508,6 +3508,18 @@ export function NorteApp() {
                 {focusPanel === 'settings' && (
                   <View style={styles.detailStack}>
                     <View style={styles.themePanel}>
+                      <Text style={styles.cardTitle}>Como o Norte te acompanha</Text>
+                      <Text style={styles.mutedText}>Esse contexto orienta as perguntas, alertas e análises.</Text>
+                      <View style={styles.pillRow}>
+                        {onboardingProfiles.map((item) => (
+                          <Pill key={item.id} label={item.id === 'personal' ? 'Pessoal' : item.id === 'freelancer' ? 'Autônomo' : 'Negócio'} selected={profile === item.id} onPress={() => setProfile(item.id)} />
+                        ))}
+                      </View>
+                      <View style={styles.pillRow}>
+                        {painPoints.map((item) => <Pill key={item} label={item} selected={selectedPain.includes(item)} onPress={() => handlePainToggle(item)} />)}
+                      </View>
+                    </View>
+                    <View style={styles.themePanel}>
                       <Text style={styles.cardTitle}>Aparencia</Text>
                       <View style={styles.themeOptions}>
                         <Pressable
