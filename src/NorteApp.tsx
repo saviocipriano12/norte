@@ -84,6 +84,7 @@ import {
   persistConfirmedDrafts,
   updateMovement,
   updateRemoteDraftAmount,
+  updateRemoteDraftCategory,
   updateRemoteDraftOccurredAt,
   updateRemoteDraftContext,
   updateGoal,
@@ -1110,6 +1111,32 @@ export function NorteApp() {
           : draft,
       ),
     );
+  };
+
+  const handleUpdateDraft = (id: string, update: { amount: number; occurredAt: string; category: MovementCategory }) => {
+    setDrafts((current) =>
+      current.map((draft) =>
+        draft.id === id
+          ? {
+              ...draft,
+              amount: update.amount,
+              occurredAt: update.occurredAt,
+              category: update.category,
+              note: 'Rascunho revisado, aguardando sua confirmacao.',
+            }
+          : draft,
+      ),
+    );
+
+    if (session && supabase) {
+      void Promise.all([
+        updateRemoteDraftAmount(id, update.amount),
+        updateRemoteDraftOccurredAt(id, update.occurredAt),
+        updateRemoteDraftCategory(id, update.category),
+      ]).catch((error) =>
+        setAssistantError(error instanceof Error ? `Revisei o rascunho no app, mas nao consegui sincronizar: ${error.message}` : 'Revisei o rascunho no app, mas nao consegui sincronizar.'),
+      );
+    }
   };
 
   const handleRemoveDraft = (id: string) => {
@@ -3362,6 +3389,7 @@ export function NorteApp() {
                       accounts={accountState}
                       onSelectContext={(context) => handleDraftContext(draft.id, context)}
                       onSelectAccount={(walletAccountId) => handleDraftAccount(draft.id, walletAccountId)}
+                      onUpdate={(update) => handleUpdateDraft(draft.id, update)}
                       onRemove={() => handleRemoveDraft(draft.id)}
                     />
                   ))
@@ -4780,16 +4808,35 @@ function DraftCard({
   accounts,
   onSelectContext,
   onSelectAccount,
+  onUpdate,
   onRemove,
 }: {
   draft: DraftEntry;
   accounts: Account[];
   onSelectContext: (context: EntryContext) => void;
   onSelectAccount: (walletAccountId: string) => void;
+  onUpdate: (update: { amount: number; occurredAt: string; category: MovementCategory }) => void;
   onRemove: () => void;
 }) {
   const activeAccounts = accounts.filter((account) => !account.isArchived);
   const selectedAccount = activeAccounts.find((account) => account.id === draft.walletAccountId);
+  const [isEditing, setIsEditing] = useState(false);
+  const [amountInput, setAmountInput] = useState(String(draft.amount));
+  const [dateInput, setDateInput] = useState(draft.occurredAt ?? new Date().toISOString().slice(0, 10));
+  const [categoryInput, setCategoryInput] = useState<MovementCategory>(draft.category ?? 'Outros');
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const saveDraftEdits = () => {
+    const amount = parseCurrencyInput(amountInput);
+    const occurredAt = normalizeEntryDate(dateInput);
+    if (!Number.isFinite(amount) || amount <= 0 || !occurredAt) {
+      setEditError('Informe um valor maior que zero e uma data valida.');
+      return;
+    }
+    onUpdate({ amount, occurredAt, category: categoryInput });
+    setEditError(null);
+    setIsEditing(false);
+  };
 
   return (
     <View style={styles.draftCard}>
@@ -4808,6 +4855,51 @@ function DraftCard({
       <View style={styles.tag}>
         <Text style={styles.tagText}>{draft.category ?? 'Outros'}</Text>
       </View>
+      {isEditing ? (
+        <View style={styles.draftEditForm}>
+          <TextInput
+            value={amountInput}
+            onChangeText={setAmountInput}
+            placeholder="Valor"
+            keyboardType="decimal-pad"
+            placeholderTextColor={palette.textMuted}
+            style={styles.field}
+          />
+          <TextInput
+            value={dateInput}
+            onChangeText={setDateInput}
+            placeholder="Data (AAAA-MM-DD)"
+            placeholderTextColor={palette.textMuted}
+            style={styles.field}
+          />
+          <View style={styles.pillRow}>
+            {movementCategories.map((category) => (
+              <Pill key={category} label={category} selected={categoryInput === category} onPress={() => setCategoryInput(category)} />
+            ))}
+          </View>
+          {editError ? <Text style={styles.inlineDanger}>{editError}</Text> : null}
+          <View style={styles.inlineActions}>
+            <Pressable onPress={saveDraftEdits}>
+              <Text style={styles.inlineLink}>Salvar revisao</Text>
+            </Pressable>
+            <Pressable onPress={() => setIsEditing(false)}>
+              <Text style={styles.inlineDanger}>Cancelar</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : (
+        <Pressable
+          onPress={() => {
+            setAmountInput(String(draft.amount));
+            setDateInput(draft.occurredAt ?? new Date().toISOString().slice(0, 10));
+            setCategoryInput(draft.category ?? 'Outros');
+            setEditError(null);
+            setIsEditing(true);
+          }}
+        >
+          <Text style={styles.inlineLink}>Editar dados</Text>
+        </Pressable>
+      )}
       <View style={styles.pillRow}>
         <Pill label="Pessoal" selected={draft.context === 'Pessoal'} onPress={() => onSelectContext('Pessoal')} />
         <Pill label="Negocio" selected={draft.context === 'Negocio'} onPress={() => onSelectContext('Negocio')} />
@@ -6131,6 +6223,10 @@ function createStyles(palette: ThemePalette) {
   categorySpendingFill: {
     height: '100%',
     borderRadius: radius.pill,
+  },
+  draftEditForm: {
+    gap: spacing.sm,
+    paddingTop: spacing.xs,
   },
   upcomingBillsList: {
     gap: spacing.sm,

@@ -439,6 +439,18 @@ export async function updateRemoteDraftOccurredAt(draftId: string, occurredAt: s
   }
 }
 
+export async function updateRemoteDraftCategory(draftId: string, category: DraftEntry['category']) {
+  const client = requireSupabase();
+  const { error } = await client
+    .from('transaction_drafts')
+    .update({ category: category ?? 'Outros', updated_at: new Date().toISOString() })
+    .eq('id', draftId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function deleteRemoteDraft(draftId: string) {
   const client = requireSupabase();
   await client.from('transaction_drafts').delete().eq('id', draftId);
