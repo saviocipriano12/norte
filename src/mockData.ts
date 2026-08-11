@@ -13,7 +13,41 @@ export const movementCategories = [
   'Servicos',
   'Outros',
 ] as const;
-export type MovementCategory = (typeof movementCategories)[number];
+export type DefaultMovementCategory = (typeof movementCategories)[number];
+// Categories are user data. Keeping this open preserves historical and custom labels.
+export type MovementCategory = string;
+
+export type FinancialCategory = {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  context?: EntryContext | null;
+  isArchived?: boolean;
+  isDefault?: boolean;
+};
+
+const categoryPresentation: Record<DefaultMovementCategory, Pick<FinancialCategory, 'icon' | 'color'>> = {
+  Alimentacao: { icon: 'restaurant-outline', color: '#FF8A00' },
+  Moradia: { icon: 'home-outline', color: '#5B8CFF' },
+  Transporte: { icon: 'car-outline', color: '#5B8CFF' },
+  Assinaturas: { icon: 'repeat-outline', color: '#8B5CF6' },
+  Saude: { icon: 'medkit-outline', color: '#EF4444' },
+  Educacao: { icon: 'school-outline', color: '#FFD84D' },
+  Lazer: { icon: 'game-controller-outline', color: '#FF8A00' },
+  Trabalho: { icon: 'briefcase-outline', color: '#21C45A' },
+  Impostos: { icon: 'document-text-outline', color: '#EF4444' },
+  Vendas: { icon: 'cart-outline', color: '#21C45A' },
+  Servicos: { icon: 'construct-outline', color: '#5B8CFF' },
+  Outros: { icon: 'pricetag-outline', color: '#777777' },
+};
+
+export const initialCategories: FinancialCategory[] = movementCategories.map((name) => ({
+  id: `default-${name.toLowerCase()}`,
+  name,
+  ...categoryPresentation[name],
+  isDefault: true,
+}));
 export type AppTab = 'home' | 'assistant' | 'moves' | 'wallet' | 'plan';
 export type OrbMode = 'idle' | 'listening' | 'thinking' | 'responding';
 

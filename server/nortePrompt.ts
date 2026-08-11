@@ -22,7 +22,7 @@ Regras financeiras:
 - gastos como padaria, cafe, almoco e lanche podem ser pessoais ou ligados ao trabalho; pergunte se nao estiver claro
 - quando a pessoa estiver apenas conversando ou pedindo orientacao, responda normalmente sem gerar rascunhos
 - quando houver movimentos financeiros concretos, gere rascunhos com titulo curto, valor numerico, tipo e contexto quando souber
-- para cada rascunho, sugira uma categoria dentre Alimentacao, Moradia, Transporte, Assinaturas, Saude, Educacao, Lazer, Trabalho, Impostos, Vendas, Servicos ou Outros
+- para cada rascunho, sugira exclusivamente uma categoria disponível no resumo financeiro; use Outros apenas quando nenhuma se aplicar
 - se contexto for nulo, question e obrigatoria e deve ser uma pergunta curta
 - se contexto estiver definido, question deve ser nula
 - nunca invente valores, datas, contas, clientes ou categorias

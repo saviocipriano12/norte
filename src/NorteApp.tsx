@@ -30,6 +30,7 @@ import {
   parseFinanceMessage,
 } from './financeEngine';
 import { NorteOrb } from './NorteOrb';
+import { getMerchantPresentation } from './merchantCatalog';
 import { createRealtimeTransport, isRealtimeVoiceSupported, type RealtimeTransport } from './realtimeTransport';
 import {
   askNorteAssistant,
@@ -44,6 +45,7 @@ import {
 import {
   goals,
   initialAccounts,
+  initialCategories,
   initialCards,
   initialAssistantInput,
   initialDrafts,
@@ -56,10 +58,10 @@ import {
   type AppTab,
   type DraftEntry,
   type EntryContext,
+  type FinancialCategory,
   type Goal,
   type Message,
   type Movement,
-  movementCategories,
   type MovementCategory,
   type OrbMode,
   type UpcomingBill,
@@ -68,6 +70,7 @@ import {
 import { loadPersistedState, removePersistedState, savePersistedState } from './storage';
 import {
   createMovement,
+  createFinancialCategory,
   createGoal,
   createScheduledBill,
   createWalletAccount,
@@ -79,6 +82,7 @@ import {
   deleteRemoteDraft,
   deleteWalletAccount,
   setWalletAccountArchived,
+  setFinancialCategoryArchived,
   deleteWalletCard,
   ensureUserProfile,
   loadWorkspaceSnapshot,
@@ -150,6 +154,13 @@ type BillFormState = {
   isRecurring: boolean;
 };
 
+type CategoryFormState = {
+  name: string;
+  icon: string;
+  color: string;
+  context: EntryContext | null;
+};
+
 type MovementTypeFilter = 'all' | 'income' | 'expense';
 type MovementContextFilter = 'all' | EntryContext;
 type MovementCategoryFilter = 'all' | MovementCategory;
@@ -177,6 +188,7 @@ type PersistedState = {
   cards: WalletCard[];
   goals?: Goal[];
   upcomingBills?: UpcomingBill[];
+  categories?: FinancialCategory[];
   assistantInput: string;
 };
 
@@ -257,6 +269,10 @@ const defaultBillForm: BillFormState = {
   context: 'Pessoal',
   isRecurring: false,
 };
+
+const categoryIconOptions = ['pricetag-outline', 'restaurant-outline', 'car-outline', 'briefcase-outline', 'home-outline', 'cart-outline', 'heart-outline', 'sparkles-outline'];
+const categoryColorOptions = ['#111111', '#21C45A', '#FF8A00', '#5B8CFF', '#FFD84D', '#EF4444'];
+const defaultCategoryForm: CategoryFormState = { name: '', icon: 'pricetag-outline', color: '#5B8CFF', context: null };
 
 function sumAmounts(items: Array<{ amount: number }>) {
   return items.reduce((total, item) => total + item.amount, 0);
@@ -507,6 +523,7 @@ export function NorteApp() {
   const [movements, setMovements] = useState<Movement[]>(initialMovements);
   const [accountState, setAccountState] = useState<Account[]>(initialAccounts);
   const [cardState, setCardState] = useState<WalletCard[]>(initialCards);
+  const [categoryState, setCategoryState] = useState<FinancialCategory[]>(initialCategories);
   const [goalState, setGoalState] = useState<Goal[]>(goals);
   const [billState, setBillState] = useState<UpcomingBill[]>(upcomingBills);
   const [assistantInput, setAssistantInput] = useState(initialAssistantInput);
@@ -527,6 +544,9 @@ export function NorteApp() {
   const [showBillForm, setShowBillForm] = useState(false);
   const [billForm, setBillForm] = useState<BillFormState>(defaultBillForm);
   const [editingBillId, setEditingBillId] = useState<string | null>(null);
+  const [showCategoryForm, setShowCategoryForm] = useState(false);
+  const [categoryForm, setCategoryForm] = useState<CategoryFormState>(defaultCategoryForm);
+  const [categoryError, setCategoryError] = useState<string | null>(null);
   const [movementTypeFilter, setMovementTypeFilter] = useState<MovementTypeFilter>('all');
   const [movementContextFilter, setMovementContextFilter] = useState<MovementContextFilter>('all');
   const [movementCategoryFilter, setMovementCategoryFilter] = useState<MovementCategoryFilter>('all');
@@ -606,6 +626,7 @@ export function NorteApp() {
         setMovements(saved.movements);
         setAccountState(saved.accounts);
         setCardState(saved.cards ?? initialCards);
+        setCategoryState(saved.categories ?? initialCategories);
         setGoalState(saved.goals ?? goals);
         setBillState(
           (saved.upcomingBills ?? upcomingBills).map((bill) => ({
@@ -690,6 +711,7 @@ export function NorteApp() {
 
         setAccountState(snapshot.accounts);
         setCardState(snapshot.cards);
+        setCategoryState([...initialCategories, ...snapshot.categories]);
         setGoalState(snapshot.goals);
         setBillState(snapshot.upcomingBills);
         setMovements(snapshot.movements);
@@ -819,6 +841,7 @@ export function NorteApp() {
       movements,
       accounts: accountState,
       cards: cardState,
+      categories: categoryState,
       goals: goalState,
       upcomingBills: billState,
       assistantInput,
@@ -839,6 +862,7 @@ export function NorteApp() {
     step,
     themeMode,
     cardState,
+    categoryState,
     billState,
     isLocalMode,
   ]);
@@ -1857,6 +1881,7 @@ export function NorteApp() {
           forecastEndBalance: cashForecast.projectedEndBalance,
           forecastLowestBalance: cashForecast.lowestBalance,
           forecastRiskDate: cashForecast.riskDate,
+          availableCategories: categoryNames,
         },
       }, session?.access_token);
 
@@ -2333,6 +2358,67 @@ export function NorteApp() {
       }
     } finally {
       setIsSavingManualEntry(false);
+    }
+  };
+
+  const activeCategories = useMemo(
+    () => categoryState.filter((category) => !category.isArchived),
+    [categoryState],
+  );
+
+  const categoryNames = useMemo(() => {
+    const names = new Set(activeCategories.map((category) => category.name));
+    movements.forEach((movement) => names.add(movement.category ?? 'Outros'));
+    drafts.forEach((draft) => names.add(draft.category ?? 'Outros'));
+    return [...names];
+  }, [activeCategories, drafts, movements]);
+
+  const handleSaveCategory = async () => {
+    const name = categoryForm.name.trim().replace(/\s+/g, ' ');
+    if (!name || name.length > 48) {
+      setCategoryError('Dê um nome de até 48 caracteres para a categoria.');
+      return;
+    }
+    if (categoryState.some((category) => category.name.toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR'))) {
+      setCategoryError('Essa categoria já existe. Escolha outro nome.');
+      return;
+    }
+
+    const localCategory: FinancialCategory = {
+      id: `category-${Date.now()}`,
+      name,
+      icon: categoryForm.icon,
+      color: categoryForm.color,
+      context: categoryForm.context,
+    };
+    setCategoryState((current) => [...current, localCategory]);
+    setCategoryForm(defaultCategoryForm);
+    setCategoryError(null);
+    setShowCategoryForm(false);
+
+    if (session && supabase) {
+      try {
+        const remoteCategory = await createFinancialCategory(session, { ...categoryForm, name });
+        setCategoryState((current) => current.map((category) => (category.id === localCategory.id ? remoteCategory : category)));
+      } catch (error) {
+        setCategoryError(error instanceof Error ? `Categoria criada no app, mas ainda não sincronizou: ${error.message}` : 'Categoria criada no app, mas ainda não sincronizou.');
+      }
+    }
+  };
+
+  const handleArchiveCategory = async (category: FinancialCategory) => {
+    if (category.isDefault) {
+      showNotice('Categoria padrão', 'As categorias padrão ficam disponíveis para preservar a organização do Norte.');
+      return;
+    }
+    setCategoryState((current) => current.map((item) => (item.id === category.id ? { ...item, isArchived: true } : item)));
+    if (session && supabase && !category.id.startsWith('category-')) {
+      try {
+        await setFinancialCategoryArchived(session, category.id, true);
+      } catch (error) {
+        setCategoryState((current) => current.map((item) => (item.id === category.id ? { ...item, isArchived: false } : item)));
+        showNotice('Não foi possível arquivar', error instanceof Error ? error.message : 'Tente novamente.');
+      }
     }
   };
 
@@ -3366,6 +3452,60 @@ export function NorteApp() {
                       }
                     />
                     <InsightRow text="Nada e salvo automaticamente sem sua confirmacao na area da IA." />
+                    <View style={styles.themePanel}>
+                      <View style={styles.rowBetween}>
+                        <View>
+                          <Text style={styles.cardTitle}>Categorias</Text>
+                          <Text style={styles.mutedText}>Personalize como o Norte organiza seus gastos.</Text>
+                        </View>
+                        <Pressable onPress={() => { setShowCategoryForm((value) => !value); setCategoryError(null); }}>
+                          <Text style={styles.inlineLink}>{showCategoryForm ? 'Fechar' : 'Nova'}</Text>
+                        </Pressable>
+                      </View>
+                      {showCategoryForm ? (
+                        <View style={styles.detailStack}>
+                          <TextInput
+                            value={categoryForm.name}
+                            onChangeText={(name) => setCategoryForm((current) => ({ ...current, name }))}
+                            placeholder="Ex.: Marketing, Pet, Entregas"
+                            placeholderTextColor={palette.textMuted}
+                            style={styles.field}
+                          />
+                          <View style={styles.pillRow}>
+                            {categoryIconOptions.map((icon) => (
+                              <Pressable key={icon} onPress={() => setCategoryForm((current) => ({ ...current, icon }))} style={[styles.iconChoice, categoryForm.icon === icon && styles.iconChoiceActive]}>
+                                <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={18} color={categoryForm.icon === icon ? palette.background : palette.text} />
+                              </Pressable>
+                            ))}
+                          </View>
+                          <View style={styles.pillRow}>
+                            {categoryColorOptions.map((color) => (
+                              <Pressable key={color} onPress={() => setCategoryForm((current) => ({ ...current, color }))} style={[styles.colorChoice, { backgroundColor: color }, categoryForm.color === color && styles.colorChoiceActive]} />
+                            ))}
+                          </View>
+                          <View style={styles.pillRow}>
+                            <Pill label="Todos" selected={!categoryForm.context} onPress={() => setCategoryForm((current) => ({ ...current, context: null }))} />
+                            <Pill label="Pessoal" selected={categoryForm.context === 'Pessoal'} onPress={() => setCategoryForm((current) => ({ ...current, context: 'Pessoal' }))} />
+                            <Pill label="Negocio" selected={categoryForm.context === 'Negocio'} onPress={() => setCategoryForm((current) => ({ ...current, context: 'Negocio' }))} />
+                          </View>
+                          {categoryError ? <Text style={styles.inlineDanger}>{categoryError}</Text> : null}
+                          <Pressable style={styles.primaryButtonCompact} onPress={() => void handleSaveCategory()}>
+                            <Text style={styles.primaryButtonText}>Criar categoria</Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                      <View style={styles.categoryManagerList}>
+                        {activeCategories.map((category) => (
+                          <View key={category.id} style={styles.categoryManagerRow}>
+                            <View style={[styles.categoryDot, { backgroundColor: category.color }]} />
+                            <Ionicons name={category.icon as keyof typeof Ionicons.glyphMap} size={16} color={palette.text} />
+                            <Text style={styles.flexOne}>{category.name}</Text>
+                            {category.context ? <Text style={styles.mutedText}>{category.context}</Text> : null}
+                            {!category.isDefault ? <Pressable onPress={() => void handleArchiveCategory(category)}><Ionicons name="archive-outline" size={17} color={palette.textMuted} /></Pressable> : null}
+                          </View>
+                        ))}
+                      </View>
+                    </View>
                     <Pressable style={styles.secondaryButton} onPress={handleResetLocalData}>
                       <Text style={styles.secondaryButtonText}>Resetar dados locais</Text>
                     </Pressable>
@@ -3497,6 +3637,7 @@ export function NorteApp() {
                       key={draft.id}
                       draft={draft}
                       accounts={accountState}
+                      categories={activeCategories}
                       onSelectContext={(context) => handleDraftContext(draft.id, context)}
                       onSelectAccount={(walletAccountId) => handleDraftAccount(draft.id, walletAccountId)}
                       onUpdate={(update) => handleUpdateDraft(draft.id, update)}
@@ -3602,12 +3743,12 @@ export function NorteApp() {
                     <View style={styles.selectionBlock}>
                       <Text style={styles.mutedText}>Categoria</Text>
                       <View style={styles.pillRow}>
-                        {movementCategories.map((category) => (
+                        {activeCategories.map((category) => (
                           <Pill
-                            key={category}
-                            label={category}
-                            selected={manualEntry.category === category}
-                            onPress={() => setManualEntry((current) => ({ ...current, category }))}
+                            key={category.id}
+                            label={category.name}
+                            selected={manualEntry.category === category.name}
+                            onPress={() => setManualEntry((current) => ({ ...current, category: category.name }))}
                           />
                         ))}
                       </View>
@@ -3684,7 +3825,7 @@ export function NorteApp() {
                   <Text style={styles.mutedText}>Categoria</Text>
                   <View style={styles.pillRow}>
                     <Pill label="Todas" selected={movementCategoryFilter === 'all'} onPress={() => setMovementCategoryFilter('all')} />
-                    {movementCategories
+                    {categoryNames
                       .filter((category) => movements.some((movement) => (movement.category ?? 'Outros') === category))
                       .map((category) => (
                         <Pill
@@ -5027,6 +5168,7 @@ function ModeButton({ label, active, onPress }: { label: string; active: boolean
 function DraftCard({
   draft,
   accounts,
+  categories,
   onSelectContext,
   onSelectAccount,
   onUpdate,
@@ -5034,6 +5176,7 @@ function DraftCard({
 }: {
   draft: DraftEntry;
   accounts: Account[];
+  categories: FinancialCategory[];
   onSelectContext: (context: EntryContext) => void;
   onSelectAccount: (walletAccountId: string) => void;
   onUpdate: (update: { amount: number; occurredAt: string; category: MovementCategory }) => void;
@@ -5094,8 +5237,8 @@ function DraftCard({
             style={styles.field}
           />
           <View style={styles.pillRow}>
-            {movementCategories.map((category) => (
-              <Pill key={category} label={category} selected={categoryInput === category} onPress={() => setCategoryInput(category)} />
+            {categories.map((category) => (
+              <Pill key={category.id} label={category.name} selected={categoryInput === category.name} onPress={() => setCategoryInput(category.name)} />
             ))}
           </View>
           {editError ? <Text style={styles.inlineDanger}>{editError}</Text> : null}
@@ -5172,11 +5315,15 @@ function MovementRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const merchant = getMerchantPresentation(movement.title);
   return (
     <View style={styles.movementRow}>
       <View style={styles.rowBetween}>
+        <View style={[styles.merchantIcon, { backgroundColor: merchant?.color ?? palette.backgroundSoft }]}>
+          <Ionicons name={(merchant?.icon ?? (movement.type === 'income' ? 'arrow-down-outline' : 'arrow-up-outline')) as keyof typeof Ionicons.glyphMap} size={17} color={merchant?.color === '#FFD84D' ? '#111111' : merchant ? '#FFFFFF' : palette.text} />
+        </View>
         <View style={styles.flexOne}>
-          <Text style={styles.cardTitle}>{movement.title}</Text>
+          <Text style={styles.cardTitle}>{merchant?.name ?? movement.title}</Text>
           <Text style={styles.mutedText}>
             {formatMovementDate(movement.createdAt)} • {movement.source} • {movement.account}
           </Text>
@@ -6750,6 +6897,51 @@ function createStyles(palette: ThemePalette) {
     borderWidth: 1,
     borderColor: palette.border,
     backgroundColor: palette.surface,
+  },
+  iconChoice: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.backgroundSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconChoiceActive: {
+    backgroundColor: palette.surfaceStrong,
+    borderColor: palette.surfaceStrong,
+  },
+  colorChoice: {
+    width: 28,
+    height: 28,
+    borderRadius: radius.pill,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  colorChoiceActive: {
+    borderColor: palette.text,
+  },
+  categoryManagerList: {
+    gap: spacing.xs,
+  },
+  categoryManagerRow: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  categoryDot: {
+    width: 8,
+    height: 8,
+    borderRadius: radius.pill,
+  },
+  merchantIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   themeOptions: {
     flexDirection: 'row',

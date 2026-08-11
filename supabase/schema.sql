@@ -47,6 +47,19 @@ create table if not exists public.cards (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.financial_categories (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  name text not null check (char_length(trim(name)) between 1 and 48),
+  icon text not null default 'pricetag-outline',
+  color text not null default '#5B8CFF',
+  context public.entry_context,
+  is_archived boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(user_id, name)
+);
+
 create table if not exists public.contacts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -157,6 +170,7 @@ alter table public.profiles enable row level security;
 alter table public.business_profiles enable row level security;
 alter table public.wallet_accounts enable row level security;
 alter table public.cards enable row level security;
+alter table public.financial_categories enable row level security;
 alter table public.contacts enable row level security;
 alter table public.assistant_threads enable row level security;
 alter table public.assistant_messages enable row level security;
@@ -172,6 +186,7 @@ create policy "profiles_update_own" on public.profiles for update using (auth.ui
 create policy "business_profiles_all_own" on public.business_profiles for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "wallet_accounts_all_own" on public.wallet_accounts for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "cards_all_own" on public.cards for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "financial_categories_all_own" on public.financial_categories for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "contacts_all_own" on public.contacts for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "assistant_threads_all_own" on public.assistant_threads for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "assistant_messages_all_own" on public.assistant_messages for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

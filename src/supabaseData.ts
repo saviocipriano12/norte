@@ -3,9 +3,11 @@ import type { Session } from '@supabase/supabase-js';
 import type { AssistantTurnResponse } from './assistantTypes';
 import {
   initialAccounts,
+  initialCategories,
   initialMessages,
   type Account,
   type DraftEntry,
+  type FinancialCategory,
   type Message,
   type Movement,
   type MovementCategory,
@@ -24,6 +26,7 @@ type WorkspaceSnapshot = {
   movements: Movement[];
   drafts: DraftEntry[];
   messages: Message[];
+  categories: FinancialCategory[];
 };
 
 type AccountInput = {
@@ -40,6 +43,8 @@ type CardInput = {
   used: number;
   walletAccountId?: string | null;
 };
+
+type FinancialCategoryInput = Pick<FinancialCategory, 'name' | 'icon' | 'color' | 'context'>;
 
 type MovementInput = {
   title: string;
@@ -124,6 +129,24 @@ function cardRowToApp(card: {
     used: Number(card.used_amount),
     walletAccountId: card.wallet_account_id,
   } satisfies WalletCard;
+}
+
+function categoryRowToApp(category: {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  context: string | null;
+  is_archived: boolean;
+}): FinancialCategory {
+  return {
+    id: category.id,
+    name: category.name,
+    icon: category.icon,
+    color: category.color,
+    context: (category.context as FinancialCategory['context']) ?? null,
+    isArchived: Boolean(category.is_archived),
+  };
 }
 
 function movementRowToApp(
@@ -225,7 +248,7 @@ export async function ensureUserProfile(input: UserProfileInput) {
 export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSnapshot | null> {
   const client = requireSupabase();
 
-  const [{ data: accounts }, { data: cards }, { data: goals }, { data: upcomingBills }, { data: movements }, { data: drafts }, { data: messages }] = await Promise.all([
+  const [{ data: accounts }, { data: cards }, { data: goals }, { data: upcomingBills }, { data: movements }, { data: drafts }, { data: messages }, { data: categories }] = await Promise.all([
     client.from('wallet_accounts').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
     client.from('cards').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
     client.from('goals').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
@@ -238,6 +261,7 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
       .eq('status', 'pending')
       .order('created_at', { ascending: false }),
     client.from('assistant_messages').select('id, role, text').eq('user_id', userId).order('created_at', { ascending: true }).limit(20),
+    client.from('financial_categories').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
   ]);
 
   const accountRows = accounts ?? [];
@@ -285,7 +309,59 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
       cardId: null,
     })),
     messages: (messages ?? []).length > 0 ? (messages ?? []).map(messageRowToApp) : initialMessages,
+    categories: (categories ?? []).map((category) => categoryRowToApp(category as never)),
   };
+}
+
+export async function createFinancialCategory(session: Session, input: FinancialCategoryInput) {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from('financial_categories')
+    .insert({
+      user_id: session.user.id,
+      name: input.name.trim(),
+      icon: input.icon,
+      color: input.color,
+      context: input.context ?? null,
+    })
+    .select('*')
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Nao foi possivel criar a categoria.');
+  }
+
+  return categoryRowToApp(data as never);
+}
+
+export async function updateFinancialCategory(session: Session, categoryId: string, input: FinancialCategoryInput) {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from('financial_categories')
+    .update({ name: input.name.trim(), icon: input.icon, color: input.color, context: input.context ?? null, updated_at: new Date().toISOString() })
+    .eq('user_id', session.user.id)
+    .eq('id', categoryId)
+    .select('*')
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Nao foi possivel atualizar a categoria.');
+  }
+
+  return categoryRowToApp(data as never);
+}
+
+export async function setFinancialCategoryArchived(session: Session, categoryId: string, isArchived: boolean) {
+  const client = requireSupabase();
+  const { error } = await client
+    .from('financial_categories')
+    .update({ is_archived: isArchived, updated_at: new Date().toISOString() })
+    .eq('user_id', session.user.id)
+    .eq('id', categoryId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
 }
 
 async function ensureAssistantThread(userId: string) {

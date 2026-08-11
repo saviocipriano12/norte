@@ -130,6 +130,7 @@ const assistantTurnRequestSchema = z.object({
       forecastEndBalance: z.number(),
       forecastLowestBalance: z.number(),
       forecastRiskDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+      availableCategories: z.array(z.string().min(1).max(48)).max(40),
     })
     .optional(),
 });
@@ -154,7 +155,7 @@ const assistantSyncRequestSchema = z.object({
         question: z.string().optional(),
         note: z.string().min(1),
         occurredAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-        category: z.enum(['Alimentacao', 'Moradia', 'Transporte', 'Assinaturas', 'Saude', 'Educacao', 'Lazer', 'Trabalho', 'Impostos', 'Vendas', 'Servicos', 'Outros']).optional(),
+        category: z.string().min(1).max(48).optional(),
       }),
     ),
   }),
