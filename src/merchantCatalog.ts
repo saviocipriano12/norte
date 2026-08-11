@@ -22,3 +22,8 @@ export function getMerchantPresentation(title: string): MerchantPresentation | n
   const normalized = ` ${title.toLocaleLowerCase('pt-BR')} `;
   return merchants.find((merchant) => merchant.terms.some((term) => normalized.includes(term)))?.presentation ?? null;
 }
+
+export function getSuggestedMerchantCategory(title: string, availableCategories: string[]): MovementCategory | null {
+  const category = getMerchantPresentation(title)?.category;
+  return category && availableCategories.includes(category) ? category : null;
+}

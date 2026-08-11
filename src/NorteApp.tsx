@@ -30,7 +30,7 @@ import {
   parseFinanceMessage,
 } from './financeEngine';
 import { NorteOrb } from './NorteOrb';
-import { getMerchantPresentation } from './merchantCatalog';
+import { getMerchantPresentation, getSuggestedMerchantCategory } from './merchantCatalog';
 import { createRealtimeTransport, isRealtimeVoiceSupported, type RealtimeTransport } from './realtimeTransport';
 import {
   askNorteAssistant,
@@ -3839,7 +3839,11 @@ export function NorteApp() {
                   <View style={styles.manualForm}>
                     <TextInput
                       value={manualEntry.title}
-                      onChangeText={(value) => setManualEntry((current) => ({ ...current, title: value }))}
+                      onChangeText={(value) => setManualEntry((current) => ({
+                        ...current,
+                        title: value,
+                        category: getSuggestedMerchantCategory(value, activeCategories.map((category) => category.name)) ?? current.category,
+                      }))}
                       placeholder="Descricao"
                       placeholderTextColor={palette.textMuted}
                       style={styles.field}
@@ -3888,6 +3892,7 @@ export function NorteApp() {
                     </View>
                     <View style={styles.selectionBlock}>
                       <Text style={styles.mutedText}>Categoria</Text>
+                      {getMerchantPresentation(manualEntry.title)?.category ? <Text style={styles.mutedText}>Sugestão pelo estabelecimento: {getMerchantPresentation(manualEntry.title)?.category}</Text> : null}
                       <View style={styles.pillRow}>
                         {activeCategories.map((category) => (
                           <Pill
