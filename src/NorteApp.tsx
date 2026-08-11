@@ -556,6 +556,7 @@ export function NorteApp() {
   const realtimeAudioRef = useRef<any>(null);
   const pendingVoiceMessageRef = useRef('');
   const pendingAssistantTranscriptRef = useRef('');
+  const isManualSignOutRef = useRef(false);
   const voiceToolHandledRef = useRef(false);
 
   useEffect(
@@ -645,7 +646,10 @@ export function NorteApp() {
       setIsAuthLoading(false);
     });
 
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: subscription } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === 'SIGNED_OUT' && !isManualSignOutRef.current) {
+        setAuthError('Sua sessao terminou. Entre novamente para continuar com seus dados sincronizados.');
+      }
       setSession(nextSession);
       setIsAuthLoading(false);
     });
@@ -1243,14 +1247,19 @@ export function NorteApp() {
     }
 
     try {
+      isManualSignOutRef.current = true;
       const { error } = await supabase.auth.signOut();
       if (error) {
         throw error;
       }
     } catch (error) {
+      isManualSignOutRef.current = false;
       setAuthError(formatAuthError(error));
       return;
     }
+    setTimeout(() => {
+      isManualSignOutRef.current = false;
+    }, 0);
     await removePersistedState(STORAGE_KEY);
     setMessages(initialMessages);
     setDrafts(initialDrafts);
