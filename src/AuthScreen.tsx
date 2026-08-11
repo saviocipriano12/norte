@@ -12,9 +12,10 @@ type AuthScreenProps = {
   isLoading: boolean;
   theme: ThemePalette;
   onSubmit: (input: { email: string; password: string; fullName?: string; mode: AuthMode }) => Promise<void>;
+  onContinueLocal?: () => void;
 };
 
-export function AuthScreen({ error, isLoading, onSubmit, theme }: AuthScreenProps) {
+export function AuthScreen({ error, isLoading, onSubmit, onContinueLocal, theme }: AuthScreenProps) {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [mode, setMode] = useState<AuthMode>('signup');
   const [fullName, setFullName] = useState('');
@@ -122,6 +123,12 @@ export function AuthScreen({ error, isLoading, onSubmit, theme }: AuthScreenProp
               {isLoading ? 'Conectando...' : mode === 'signup' ? 'Criar conta e entrar' : 'Entrar agora'}
             </Text>
           </Pressable>
+          {onContinueLocal ? (
+            <Pressable style={styles.secondaryButton} onPress={onContinueLocal}>
+              <Ionicons name="eye-outline" size={17} color={theme.text} />
+              <Text style={styles.secondaryButtonText}>Explorar demonstracao sem conta</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
     </View>
@@ -334,6 +341,22 @@ function createStyles(theme: ThemePalette) {
     primaryButtonText: {
       color: theme.background,
       fontSize: 15,
+      fontWeight: '700',
+    },
+    secondaryButton: {
+      minHeight: 52,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: theme.borderStrong,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.sm,
+      paddingHorizontal: spacing.xl,
+    },
+    secondaryButtonText: {
+      color: theme.text,
+      fontSize: 14,
       fontWeight: '700',
     },
   });

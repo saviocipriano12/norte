@@ -6,28 +6,28 @@
     "@config-plugins/react-native-webrtc": "^15.0.1",
     "@expo/metro-runtime": "^57.0.2",
     "@expo/vector-icons": "^15.1.1",
-    "@react-native-async-storage/async-storage": "^3.1.1",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "@shopify/react-native-skia": "2.6.2",
     "@supabase/supabase-js": "^2.110.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "expo": "~57.0.1",
-    "expo-dev-client": "~57.0.9",
+    "expo": "~57.0.12",
+    "expo-dev-client": "~57.0.11",
     "expo-font": "~57.0.1",
-    "expo-linear-gradient": "^57.0.0",
-    "expo-status-bar": "~57.0.0",
-    "expo-system-ui": "~57.0.1",
+    "expo-linear-gradient": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.2",
     "express": "^5.2.1",
     "multer": "^2.2.0",
     "openai": "^6.45.0",
     "react": "19.2.3",
     "react-dom": "^19.2.3",
-    "react-native": "0.86.0",
-    "react-native-reanimated": "4.5.0",
-    "react-native-svg": "^15.15.5",
+    "react-native": "0.86.2",
+    "react-native-reanimated": "4.5.1",
+    "react-native-svg": "15.15.4",
     "react-native-web": "^0.21.2",
     "react-native-webrtc": "^124.0.8",
-    "react-native-worklets": "^0.10.3",
+    "react-native-worklets": "0.10.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -44,6 +44,13 @@
   "overrides": {
     "@config-plugins/react-native-webrtc": {
       "expo": "$expo"
+    }
+  },
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": ["react-native-webrtc"]
+      }
     }
   },
   "scripts": {

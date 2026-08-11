@@ -42,7 +42,8 @@
           "cameraPermission": "O Norte usa o microfone para conversar por voz com a IA.",
           "microphonePermission": "O Norte usa o microfone para conversar por voz com a IA."
         }
-      ]
+      ],
+      "expo-status-bar"
     ]
   }
 }

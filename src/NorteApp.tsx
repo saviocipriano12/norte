@@ -137,7 +137,7 @@ type BillFormState = {
 
 type MovementTypeFilter = 'all' | 'income' | 'expense';
 type MovementContextFilter = 'all' | EntryContext;
-type FinancialHealth = 'healthy' | 'stable' | 'attention' | 'critical';
+type FinancialHealth = 'starting' | 'healthy' | 'stable' | 'attention' | 'critical';
 
 type PersistedState = {
   step: 'welcome' | 'onboarding' | 'app';
@@ -357,6 +357,7 @@ function inferContextReply(message: string): EntryContext | null {
 export function NorteApp() {
   const [isHydrating, setIsHydrating] = useState(true);
   const [isAuthLoading, setIsAuthLoading] = useState(isSupabaseConfigured());
+  const [isLocalMode, setIsLocalMode] = useState(!isSupabaseConfigured());
   const [isRemoteSyncing, setIsRemoteSyncing] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -649,7 +650,7 @@ export function NorteApp() {
   }, []);
 
   useEffect(() => {
-    if (isHydrating || isSupabaseConfigured()) {
+    if (isHydrating || (isSupabaseConfigured() && !isLocalMode)) {
       return;
     }
 
@@ -687,6 +688,7 @@ export function NorteApp() {
     themeMode,
     cardState,
     billState,
+    isLocalMode,
   ]);
 
   useEffect(() => {
@@ -761,8 +763,12 @@ export function NorteApp() {
 
   const spendableToday = Math.max(personalBalance - personalBillsTotal - pendingPersonalExpense - 150, 0);
   const overdueBills = billState.filter((bill) => isBillOverdue(bill.due));
+  const hasFinancialData =
+    movements.length > 0 || drafts.length > 0 || billState.length > 0 || accountState.some((account) => account.balance !== 0);
   const financialHealth: FinancialHealth =
-    overdueBills.length > 0 || spendableToday <= 0
+    !hasFinancialData
+      ? 'starting'
+      : overdueBills.length > 0 || spendableToday <= 0
       ? 'critical'
       : pendingQuestions > 0 || businessProfit < 0
         ? 'attention'
@@ -770,6 +776,7 @@ export function NorteApp() {
           ? 'healthy'
           : 'stable';
   const financialHealthPresentation: Record<FinancialHealth, { label: string; color: string }> = {
+    starting: { label: 'Comecando', color: '#5B8CFF' },
     healthy: { label: 'Saudavel', color: '#21C45A' },
     stable: { label: 'Estavel', color: '#5B8CFF' },
     attention: { label: 'Atencao', color: '#FF8A00' },
@@ -801,7 +808,14 @@ export function NorteApp() {
   ];
 
   const northGuidance =
-    pendingQuestions > 0
+    !hasFinancialData
+      ? {
+          eyebrow: 'Primeiro passo',
+          title: 'Conte seu dia financeiro ao Norte',
+          description: 'Fale uma entrada ou despesa e eu organizo tudo em um rascunho para voce revisar.',
+          icon: 'sparkles-outline' as keyof typeof Ionicons.glyphMap,
+        }
+      : pendingQuestions > 0
       ? {
           eyebrow: 'Proximo passo',
           title: 'Termine de classificar seus rascunhos',
@@ -1011,6 +1025,7 @@ export function NorteApp() {
     setActiveTab('assistant');
     setFocusPanel('business');
     setStep('welcome');
+    setIsLocalMode(false);
     setIsDrawerOpen(false);
     setIsProfileOpen(false);
   };
@@ -2342,7 +2357,7 @@ export function NorteApp() {
     );
   }
 
-  if (isAuthLoading) {
+  if (isAuthLoading && !isSupabaseConfigured()) {
     return (
       <Shell theme={currentTheme}>
         <SafeAreaView style={styles.safeArea}>
@@ -2356,12 +2371,23 @@ export function NorteApp() {
     );
   }
 
-  if (isSupabaseConfigured() && !session) {
+  if (isSupabaseConfigured() && !session && !isLocalMode) {
     return (
       <Shell theme={currentTheme}>
         <SafeAreaView style={styles.safeArea}>
           <View style={styles.authWrap}>
-            <AuthScreen error={authError} isLoading={isAuthLoading} onSubmit={handleAuthSubmit} theme={currentTheme} />
+            <AuthScreen
+              error={authError}
+              isLoading={isAuthLoading}
+              onSubmit={handleAuthSubmit}
+              onContinueLocal={() => {
+                setAuthError(null);
+                setIsLocalMode(true);
+                setStep('app');
+                setActiveTab('assistant');
+              }}
+              theme={currentTheme}
+            />
           </View>
         </SafeAreaView>
       </Shell>
@@ -2515,7 +2541,9 @@ export function NorteApp() {
           </View>
           <View style={styles.headerActions}>
             <View style={styles.headerBadge}>
-              <Text style={styles.headerBadgeText}>{isRemoteSyncing ? 'Sincronizando' : 'Nuvem ativa'}</Text>
+              <Text style={styles.headerBadgeText}>
+                {isLocalMode ? 'Modo demonstracao' : isRemoteSyncing ? 'Sincronizando' : 'Nuvem ativa'}
+              </Text>
             </View>
             <Pressable style={styles.avatarButton} onPress={() => setIsProfileOpen((value) => !value)}>
               <LinearGradient colors={palette.avatarGradient} style={styles.avatarGradient}>
@@ -2540,10 +2568,17 @@ export function NorteApp() {
               <Ionicons name="settings-outline" size={18} color={palette.text} />
               <Text style={styles.profileActionText}>Abrir configuracoes</Text>
             </Pressable>
-            <Pressable style={styles.profileAction} onPress={() => void handleSignOut()}>
-              <Ionicons name="log-out-outline" size={18} color={palette.text} />
-              <Text style={styles.profileActionText}>Sair da conta</Text>
-            </Pressable>
+            {isLocalMode ? (
+              <Pressable style={styles.profileAction} onPress={() => setIsLocalMode(false)}>
+                <Ionicons name="cloud-upload-outline" size={18} color={palette.text} />
+                <Text style={styles.profileActionText}>Entrar e sincronizar dados</Text>
+              </Pressable>
+            ) : (
+              <Pressable style={styles.profileAction} onPress={() => void handleSignOut()}>
+                <Ionicons name="log-out-outline" size={18} color={palette.text} />
+                <Text style={styles.profileActionText}>Sair da conta</Text>
+              </Pressable>
+            )}
           </View>
         ) : null}
 
@@ -2685,7 +2720,13 @@ export function NorteApp() {
                 </Text>
                 <Text style={styles.backendHint}>Backend: {getNorteApiBaseUrl()}</Text>
                 <Text style={styles.backendHint}>
-                  OpenAI: {assistantHealth?.openaiConfigured ? 'conectada' : 'aguardando validacao'} {assistantHealth?.model ? `| Modelo: ${assistantHealth.model}` : ''}
+                  OpenAI:{' '}
+                  {isLocalMode
+                    ? 'demonstracao local'
+                    : assistantHealth?.openaiConfigured
+                      ? 'conectada'
+                      : 'aguardando validacao'}{' '}
+                  {!isLocalMode && assistantHealth?.model ? `| Modelo: ${assistantHealth.model}` : ''}
                 </Text>
 
                   <View style={styles.orbStage}>

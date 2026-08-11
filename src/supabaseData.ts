@@ -152,6 +152,10 @@ function movementRowToApp(
   };
 }
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 export async function ensureUserProfile(input: UserProfileInput) {
   const client = requireSupabase();
 
@@ -459,16 +463,21 @@ export async function persistConfirmedDrafts(session: Session, drafts: DraftEntr
       user_id: session.user.id,
       wallet_account_id: walletAccountId,
       card_id: draft.cardId ?? null,
-      draft_id: draft.id,
       title: draft.title,
       amount: draft.amount,
       type: draft.type,
       context: draft.context ?? 'Pessoal',
       source: 'IA',
       occurred_at: new Date().toISOString(),
+      draft_id: isUuid(draft.id) ? draft.id : null,
     });
 
-    await client.from('transaction_drafts').update({ status: 'confirmed', updated_at: new Date().toISOString() }).eq('id', draft.id);
+    if (isUuid(draft.id)) {
+      await client
+        .from('transaction_drafts')
+        .update({ status: 'confirmed', updated_at: new Date().toISOString() })
+        .eq('id', draft.id);
+    }
 
     if (walletAccountId) {
       await updateWalletBalance(walletAccountId, movementBalanceDelta(draft.type, draft.amount));
