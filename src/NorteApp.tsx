@@ -3108,6 +3108,19 @@ export function NorteApp() {
 
               <Card variant="soft">
                 <View style={styles.rowBetween}>
+                  <View>
+                    <Text style={styles.cardTitle}>Para onde seu dinheiro foi</Text>
+                    <Text style={styles.mutedText}>Despesas deste mes</Text>
+                  </View>
+                  <Pressable onPress={() => setActiveTab('moves')}>
+                    <Text style={styles.inlineLink}>Ver movimentos</Text>
+                  </Pressable>
+                </View>
+                <CategorySpendingList items={categorySpending} />
+              </Card>
+
+              <Card variant="soft">
+                <View style={styles.rowBetween}>
                   <Text style={styles.cardTitle}>Suas metas</Text>
                   <Pressable onPress={() => setActiveTab('plan')}>
                     <Text style={styles.inlineLink}>Ver tudo</Text>
@@ -4665,6 +4678,49 @@ function InsightRow({ text }: { text: string }) {
   );
 }
 
+function CategorySpendingList({
+  items,
+}: {
+  items: Array<{ category: string; amount: number; movementCount: number }>;
+}) {
+  const topItems = items.slice(0, 4);
+  const maximum = topItems[0]?.amount ?? 0;
+
+  if (topItems.length === 0) {
+    return (
+      <View style={styles.emptyState}>
+        <Ionicons name="pie-chart-outline" size={22} color={palette.textMuted} />
+        <Text style={styles.bodyText}>Seus gastos por categoria aparecerao aqui conforme voce registrar o dia.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.categorySpendingList}>
+      {topItems.map((item, index) => (
+        <View key={item.category} style={styles.categorySpendingItem}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.bodyText}>{item.category}</Text>
+            <Text style={styles.categorySpendingValue}>{currency.format(item.amount)}</Text>
+          </View>
+          <View style={styles.categorySpendingTrack}>
+            <View
+              style={[
+                styles.categorySpendingFill,
+                {
+                  width: `${maximum > 0 ? Math.max((item.amount / maximum) * 100, 5) : 0}%`,
+                  backgroundColor: index === 0 ? palette.text : ['#21C45A', '#FF8A00', '#5B8CFF'][index - 1] ?? palette.textMuted,
+                },
+              ]}
+            />
+          </View>
+          <Text style={styles.mutedText}>{item.movementCount} lancamento{item.movementCount === 1 ? '' : 's'}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function ModeButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={[styles.modeButton, active && styles.modeButtonActive]}>
@@ -6007,6 +6063,28 @@ function createStyles(palette: ThemePalette) {
     height: '100%',
     borderRadius: radius.pill,
     backgroundColor: palette.text,
+  },
+  categorySpendingList: {
+    gap: spacing.md,
+    marginTop: spacing.md,
+  },
+  categorySpendingItem: {
+    gap: spacing.xs,
+  },
+  categorySpendingValue: {
+    color: palette.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  categorySpendingTrack: {
+    height: 6,
+    overflow: 'hidden',
+    borderRadius: radius.pill,
+    backgroundColor: palette.backgroundSoft,
+  },
+  categorySpendingFill: {
+    height: '100%',
+    borderRadius: radius.pill,
   },
   drawerBackdrop: {
     flex: 1,
