@@ -73,6 +73,7 @@ import { loadPersistedState, removePersistedState, savePersistedState } from './
 import {
   createMovement,
   createFinancialCategory,
+  updateFinancialCategory,
   createFinancialConnection,
   payCardInvoice,
   createGoal,
@@ -572,6 +573,7 @@ export function NorteApp() {
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [categoryForm, setCategoryForm] = useState<CategoryFormState>(defaultCategoryForm);
   const [categoryError, setCategoryError] = useState<string | null>(null);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [showConnectionForm, setShowConnectionForm] = useState(false);
   const [connectionForm, setConnectionForm] = useState<ConnectionFormState>(defaultConnectionForm);
   const [cardPaymentForm, setCardPaymentForm] = useState<CardPaymentFormState>(defaultCardPaymentForm);
@@ -2486,31 +2488,46 @@ export function NorteApp() {
       setCategoryError('Dê um nome de até 48 caracteres para a categoria.');
       return;
     }
-    if (categoryState.some((category) => category.name.toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR'))) {
+    if (categoryState.some((category) => category.id !== editingCategoryId && category.name.toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR'))) {
       setCategoryError('Essa categoria já existe. Escolha outro nome.');
       return;
     }
 
+    const existingCategory = categoryState.find((category) => category.id === editingCategoryId);
     const localCategory: FinancialCategory = {
-      id: `category-${Date.now()}`,
+      id: editingCategoryId ?? `category-${Date.now()}`,
       name,
       icon: categoryForm.icon,
       color: categoryForm.color,
       context: categoryForm.context,
     };
-    setCategoryState((current) => [...current, localCategory]);
+    setCategoryState((current) => editingCategoryId ? current.map((category) => category.id === editingCategoryId ? { ...localCategory, isDefault: existingCategory?.isDefault } : category) : [...current, localCategory]);
     setCategoryForm(defaultCategoryForm);
+    setEditingCategoryId(null);
     setCategoryError(null);
     setShowCategoryForm(false);
 
     if (session && supabase) {
       try {
-        const remoteCategory = await createFinancialCategory(session, { ...categoryForm, name });
+        const remoteCategory = editingCategoryId && !editingCategoryId.startsWith('category-')
+          ? await updateFinancialCategory(session, editingCategoryId, { ...categoryForm, name })
+          : await createFinancialCategory(session, { ...categoryForm, name });
         setCategoryState((current) => current.map((category) => (category.id === localCategory.id ? remoteCategory : category)));
       } catch (error) {
         setCategoryError(error instanceof Error ? `Categoria criada no app, mas ainda não sincronizou: ${error.message}` : 'Categoria criada no app, mas ainda não sincronizou.');
       }
     }
+  };
+
+  const handleEditCategory = (category: FinancialCategory) => {
+    if (category.isDefault) {
+      showNotice('Categoria padrão', 'As categorias padrão ficam protegidas para manter a organização do Norte. Crie uma personalizada quando precisar de outra classificação.');
+      return;
+    }
+    setEditingCategoryId(category.id);
+    setCategoryForm({ name: category.name, icon: category.icon, color: category.color, context: category.context ?? null });
+    setCategoryError(null);
+    setShowCategoryForm(true);
   };
 
   const handleArchiveCategory = async (category: FinancialCategory) => {
@@ -3651,7 +3668,7 @@ export function NorteApp() {
                           <Text style={styles.cardTitle}>Categorias</Text>
                           <Text style={styles.mutedText}>Personalize como o Norte organiza seus gastos.</Text>
                         </View>
-                        <Pressable onPress={() => { setShowCategoryForm((value) => !value); setCategoryError(null); }}>
+                        <Pressable onPress={() => { setShowCategoryForm((value) => !value); setEditingCategoryId(null); setCategoryForm(defaultCategoryForm); setCategoryError(null); }}>
                           <Text style={styles.inlineLink}>{showCategoryForm ? 'Fechar' : 'Nova'}</Text>
                         </Pressable>
                       </View>
@@ -3683,7 +3700,7 @@ export function NorteApp() {
                           </View>
                           {categoryError ? <Text style={styles.inlineDanger}>{categoryError}</Text> : null}
                           <Pressable style={styles.primaryButtonCompact} onPress={() => void handleSaveCategory()}>
-                            <Text style={styles.primaryButtonText}>Criar categoria</Text>
+                            <Text style={styles.primaryButtonText}>{editingCategoryId ? 'Salvar categoria' : 'Criar categoria'}</Text>
                           </Pressable>
                         </View>
                       ) : null}
@@ -3694,6 +3711,7 @@ export function NorteApp() {
                             <Ionicons name={category.icon as keyof typeof Ionicons.glyphMap} size={16} color={palette.text} />
                             <Text style={styles.flexOne}>{category.name}</Text>
                             {category.context ? <Text style={styles.mutedText}>{category.context}</Text> : null}
+                            {!category.isDefault ? <Pressable onPress={() => handleEditCategory(category)}><Ionicons name="pencil-outline" size={17} color={palette.textMuted} /></Pressable> : null}
                             {!category.isDefault ? <Pressable onPress={() => void handleArchiveCategory(category)}><Ionicons name="archive-outline" size={17} color={palette.textMuted} /></Pressable> : null}
                           </View>
                         ))}
