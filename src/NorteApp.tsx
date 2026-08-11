@@ -73,6 +73,7 @@ import {
   deleteScheduledBill,
   deleteRemoteDraft,
   deleteWalletAccount,
+  setWalletAccountArchived,
   deleteWalletCard,
   ensureUserProfile,
   loadWorkspaceSnapshot,
@@ -386,15 +387,21 @@ function nextRecurringDue(value: string) {
 }
 
 function pickAccountForContext(accounts: Account[], context: EntryContext | undefined) {
-  if (accounts.length === 0) {
+  const activeAccounts = accounts.filter((account) => !account.isArchived);
+
+  if (activeAccounts.length === 0) {
     return null;
   }
 
   if (context === 'Negocio') {
-    return accounts.find((account) => account.isBusiness) ?? accounts[0];
+    return activeAccounts.find((account) => account.isBusiness) ?? activeAccounts[0];
   }
 
-  return accounts.find((account) => !account.isBusiness && account.kind !== 'reserve') ?? accounts.find((account) => !account.isBusiness) ?? accounts[0];
+  return (
+    activeAccounts.find((account) => !account.isBusiness && account.kind !== 'reserve') ??
+    activeAccounts.find((account) => !account.isBusiness) ??
+    activeAccounts[0]
+  );
 }
 
 function inferContextReply(message: string): EntryContext | null {
@@ -779,16 +786,19 @@ export function NorteApp() {
     isLocalMode,
   ]);
 
+  const activeAccounts = useMemo(() => accountState.filter((account) => !account.isArchived), [accountState]);
+
   useEffect(() => {
-    if (manualEntry.accountId || accountState.length === 0) {
+    const selectedAccountIsActive = activeAccounts.some((account) => account.id === manualEntry.accountId);
+    if (selectedAccountIsActive || activeAccounts.length === 0) {
       return;
     }
 
     setManualEntry((current) => ({
       ...current,
-      accountId: accountState[0].id,
+      accountId: activeAccounts[0].id,
     }));
-  }, [accountState, manualEntry.accountId]);
+  }, [activeAccounts, manualEntry.accountId]);
 
   const pendingQuestions = drafts.filter((draft) => !draft.context).length;
   const userDisplayName =
@@ -847,19 +857,19 @@ export function NorteApp() {
     (total, movement) => total + (movement.type === 'income' ? movement.amount : -movement.amount),
     0,
   );
-  const manualEntryAccount = accountState.find((account) => account.id === manualEntry.accountId) ?? accountState[0] ?? null;
+  const manualEntryAccount = activeAccounts.find((account) => account.id === manualEntry.accountId) ?? activeAccounts[0] ?? null;
   const manualEntryCard = cardState.find((card) => card.id === manualEntry.cardId) ?? null;
 
-  const personalBalance = accountState
+  const personalBalance = activeAccounts
     .filter((account) => !account.isBusiness && account.kind !== 'reserve')
     .reduce((total, account) => total + account.balance, 0);
-  const businessBalance = accountState
+  const businessBalance = activeAccounts
     .filter((account) => account.isBusiness)
     .reduce((total, account) => total + account.balance, 0);
-  const reserveBalance = accountState
+  const reserveBalance = activeAccounts
     .filter((account) => account.kind === 'reserve')
     .reduce((total, account) => total + account.balance, 0);
-  const totalBalance = accountState.reduce((total, account) => total + account.balance, 0);
+  const totalBalance = activeAccounts.reduce((total, account) => total + account.balance, 0);
   const upcomingBillsTotal = sumAmounts(billState);
   const personalBillsTotal = billState.reduce((total, bill) => total + bill.amount * personalContextWeight(bill.context), 0);
   const businessBillsTotal = billState.reduce((total, bill) => total + bill.amount * movementBusinessWeight(bill.context), 0);
@@ -1975,7 +1985,7 @@ export function NorteApp() {
   };
 
   const handleConfirmDrafts = async () => {
-    if (isConfirmingDrafts || drafts.length === 0 || drafts.some((draft) => !draft.context) || accountState.length === 0) {
+    if (isConfirmingDrafts || drafts.length === 0 || drafts.some((draft) => !draft.context) || activeAccounts.length === 0) {
       return;
     }
 
@@ -1985,9 +1995,9 @@ export function NorteApp() {
       const confirmedMovements = drafts.map((draft) => {
         const baseMovement = buildMovementFromDraft(draft);
         const account =
-          accountState.find((item) => item.id === draft.walletAccountId) ??
+          activeAccounts.find((item) => item.id === draft.walletAccountId) ??
           pickAccountForContext(accountState, draft.context) ??
-          accountState[0] ??
+          activeAccounts[0] ??
           null;
 
         return {
@@ -2075,7 +2085,7 @@ export function NorteApp() {
       setManualEntry({
         ...defaultManualEntry,
         date: new Date().toISOString().slice(0, 10),
-        accountId: accountState[0]?.id ?? '',
+        accountId: activeAccounts[0]?.id ?? '',
       });
       setShowManualEntry(false);
       setEditingMovementId(null);
@@ -2131,7 +2141,11 @@ export function NorteApp() {
       date: movement.createdAt.slice(0, 10),
       type: movement.type,
       context: movement.context,
-      accountId: movement.walletAccountId ?? accountState.find((account) => account.name === movement.account)?.id ?? accountState[0]?.id ?? '',
+      accountId:
+        activeAccounts.find((account) => account.id === movement.walletAccountId)?.id ??
+        activeAccounts.find((account) => account.name === movement.account)?.id ??
+        activeAccounts[0]?.id ??
+        '',
       cardId: movement.cardId ?? '',
     });
     setActiveTab('moves');
@@ -2270,6 +2284,32 @@ export function NorteApp() {
         ]);
       }
     }
+  };
+
+  const handleArchiveAccount = async (accountId: string, isArchived: boolean) => {
+    const previousAccount = accountState.find((account) => account.id === accountId);
+    setAccountState((items) => items.map((account) => (account.id === accountId ? { ...account, isArchived } : account)));
+    if (session && supabase) {
+      try {
+        await setWalletAccountArchived(session, accountId, isArchived);
+      } catch (error) {
+        if (previousAccount) {
+          setAccountState((items) => items.map((account) => (account.id === accountId ? previousAccount : account)));
+        }
+        showNotice(
+          'Nao foi possivel atualizar a conta',
+          error instanceof Error ? error.message : 'Tente novamente em alguns instantes.',
+        );
+      }
+    }
+  };
+
+  const requestArchiveAccount = (account: Account) => {
+    confirmDestructiveAction(
+      'Arquivar conta?',
+      'Ela sairá do saldo disponível e dos novos lançamentos. Os movimentos anteriores continuarão no histórico.',
+      () => handleArchiveAccount(account.id, true),
+    );
   };
 
   const requestDeleteAccount = (accountId: string) => {
@@ -3212,7 +3252,7 @@ export function NorteApp() {
                       setShowManualEntry((value) => !value);
                       if (showManualEntry) {
                         setEditingMovementId(null);
-                        setManualEntry({ ...defaultManualEntry, accountId: accountState[0]?.id ?? '' });
+                        setManualEntry({ ...defaultManualEntry, accountId: activeAccounts[0]?.id ?? '' });
                       }
                     }}
                   >
@@ -3274,7 +3314,7 @@ export function NorteApp() {
                     <View style={styles.selectionBlock}>
                       <Text style={styles.mutedText}>Conta</Text>
                       <View style={styles.pillRow}>
-                        {accountState.map((account) => (
+                        {activeAccounts.map((account) => (
                           <Pill
                             key={account.id}
                             label={account.name}
@@ -3350,7 +3390,7 @@ export function NorteApp() {
                     <Text style={styles.mutedText}>Conta</Text>
                     <View style={styles.pillRow}>
                       <Pill label="Todas" selected={movementAccountFilter === 'all'} onPress={() => setMovementAccountFilter('all')} />
-                      {accountState.map((account) => (
+                      {activeAccounts.map((account) => (
                         <Pill
                           key={account.id}
                           label={account.name}
@@ -3511,7 +3551,7 @@ export function NorteApp() {
                   </View>
                 ) : null}
                 <View style={styles.detailStack}>
-                  {accountState.map((account) => (
+                  {accountState.filter((account) => !account.isArchived).map((account) => (
                     <View key={account.id} style={styles.entityCard}>
                       <View style={styles.accountRow}>
                         <View>
@@ -3524,6 +3564,9 @@ export function NorteApp() {
                         <Pressable onPress={() => handleEditAccount(account)}>
                           <Text style={styles.inlineLink}>Editar</Text>
                         </Pressable>
+                        <Pressable onPress={() => requestArchiveAccount(account)}>
+                          <Text style={styles.inlineLink}>Arquivar</Text>
+                        </Pressable>
                         <Pressable onPress={() => requestDeleteAccount(account.id)}>
                           <Text style={styles.inlineDanger}>Excluir</Text>
                         </Pressable>
@@ -3531,6 +3574,24 @@ export function NorteApp() {
                     </View>
                   ))}
                 </View>
+                {accountState.some((account) => account.isArchived) ? (
+                  <View style={styles.archivedAccountsBlock}>
+                    <Text style={styles.mutedText}>Contas arquivadas</Text>
+                    {accountState
+                      .filter((account) => account.isArchived)
+                      .map((account) => (
+                        <View key={account.id} style={styles.archivedAccountRow}>
+                          <View>
+                            <Text style={styles.bodyText}>{account.name}</Text>
+                            <Text style={styles.mutedText}>Fora do saldo disponível</Text>
+                          </View>
+                          <Pressable onPress={() => void handleArchiveAccount(account.id, false)}>
+                            <Text style={styles.inlineLink}>Restaurar</Text>
+                          </Pressable>
+                        </View>
+                      ))}
+                  </View>
+                ) : null}
               </Card>
 
               <Card>
@@ -3581,7 +3642,7 @@ export function NorteApp() {
                           selected={!cardForm.walletAccountId}
                           onPress={() => setCardForm((current) => ({ ...current, walletAccountId: '' }))}
                         />
-                        {accountState.map((account) => (
+                        {activeAccounts.map((account) => (
                           <Pill
                             key={account.id}
                             label={account.name}
@@ -5698,6 +5759,20 @@ function createStyles(palette: ThemePalette) {
     flexDirection: 'row',
     gap: spacing.md,
     alignItems: 'center',
+  },
+  archivedAccountsBlock: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+  },
+  archivedAccountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.xs,
   },
   undoBar: {
     flexDirection: 'row',

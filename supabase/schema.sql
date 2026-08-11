@@ -32,6 +32,7 @@ create table if not exists public.wallet_accounts (
   currency text not null default 'BRL',
   balance numeric(14,2) not null default 0,
   is_business boolean not null default false,
+  is_archived boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

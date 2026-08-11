@@ -95,6 +95,7 @@ function accountRowToApp(account: {
   balance: number | string;
   kind: string;
   is_business: boolean;
+  is_archived?: boolean;
 }) {
   return {
     id: account.id,
@@ -103,6 +104,7 @@ function accountRowToApp(account: {
     detail: account.is_business ? 'Conta sincronizada do negocio' : 'Conta sincronizada',
     kind: account.kind,
     isBusiness: account.is_business,
+    isArchived: Boolean(account.is_archived),
   } satisfies Account;
 }
 
@@ -558,6 +560,19 @@ export async function updateWalletAccount(session: Session, accountId: string, i
 export async function deleteWalletAccount(session: Session, accountId: string) {
   const client = requireSupabase();
   const { error } = await client.from('wallet_accounts').delete().eq('user_id', session.user.id).eq('id', accountId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function setWalletAccountArchived(session: Session, accountId: string, isArchived: boolean) {
+  const client = requireSupabase();
+  const { error } = await client
+    .from('wallet_accounts')
+    .update({ is_archived: isArchived, updated_at: new Date().toISOString() })
+    .eq('user_id', session.user.id)
+    .eq('id', accountId);
 
   if (error) {
     throw new Error(error.message);

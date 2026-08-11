@@ -41,6 +41,7 @@ export type Account = {
   detail: string;
   kind: string;
   isBusiness: boolean;
+  isArchived?: boolean;
 };
 
 export type WalletCard = {
