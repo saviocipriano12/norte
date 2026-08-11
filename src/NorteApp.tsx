@@ -24,6 +24,7 @@ import {
   formatMovementDate,
   movementBusinessWeight,
   parseCurrencyInput,
+  parseDraftCorrectionAmount,
   parseFinanceMessage,
 } from './financeEngine';
 import { NorteOrb } from './NorteOrb';
@@ -77,8 +78,10 @@ import {
   loadWorkspaceSnapshot,
   persistConfirmedDrafts,
   updateMovement,
+  updateRemoteDraftAmount,
   updateRemoteDraftContext,
   updateGoal,
+  updateScheduledBill,
   updateWalletAccount,
   updateWalletCard,
 } from './supabaseData';
@@ -101,6 +104,7 @@ type DrawerDestination = AppTab | FocusPanel;
 type ManualEntryState = {
   title: string;
   amount: string;
+  date: string;
   type: 'income' | 'expense';
   context: EntryContext;
   accountId: string;
@@ -138,6 +142,10 @@ type BillFormState = {
 type MovementTypeFilter = 'all' | 'income' | 'expense';
 type MovementContextFilter = 'all' | EntryContext;
 type FinancialHealth = 'starting' | 'healthy' | 'stable' | 'attention' | 'critical';
+type PendingMovementDeletion = {
+  movement: Movement;
+  timeoutId: ReturnType<typeof setTimeout>;
+};
 
 type PersistedState = {
   step: 'welcome' | 'onboarding' | 'app';
@@ -197,6 +205,7 @@ function getStyles(themeMode: ThemeMode) {
 const defaultManualEntry: ManualEntryState = {
   title: '',
   amount: '',
+  date: new Date().toISOString().slice(0, 10),
   type: 'expense',
   context: 'Pessoal',
   accountId: '',
@@ -280,6 +289,27 @@ function isValidIsoDate(value: string) {
   const [year, month, day] = value.split('-').map(Number);
   const date = new Date(year, month - 1, day);
   return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+}
+
+function normalizeEntryDate(value: string) {
+  const trimmed = value.trim();
+
+  if (isValidIsoDate(trimmed)) {
+    return trimmed;
+  }
+
+  const brazilianDate = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!brazilianDate) {
+    return null;
+  }
+
+  const isoDate = `${brazilianDate[3]}-${brazilianDate[2]}-${brazilianDate[1]}`;
+  return isValidIsoDate(isoDate) ? isoDate : null;
+}
+
+function buildMovementTimestamp(date: string, previousTimestamp?: string) {
+  const time = previousTimestamp?.match(/T(\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z)$/)?.[1] ?? new Date().toISOString().split('T')[1];
+  return `${date}T${time}`;
 }
 
 function formatBillDue(value: string) {
@@ -404,8 +434,13 @@ export function NorteApp() {
   const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
   const [showBillForm, setShowBillForm] = useState(false);
   const [billForm, setBillForm] = useState<BillFormState>(defaultBillForm);
+  const [editingBillId, setEditingBillId] = useState<string | null>(null);
   const [movementTypeFilter, setMovementTypeFilter] = useState<MovementTypeFilter>('all');
   const [movementContextFilter, setMovementContextFilter] = useState<MovementContextFilter>('all');
+  const [movementSearch, setMovementSearch] = useState('');
+  const [pendingMovementDeletion, setPendingMovementDeletion] = useState<PendingMovementDeletion | null>(null);
+  const [isSavingManualEntry, setIsSavingManualEntry] = useState(false);
+  const [isConfirmingDrafts, setIsConfirmingDrafts] = useState(false);
   const recorderRef = useRef<any>(null);
   const recorderStreamRef = useRef<any>(null);
   const recorderChunksRef = useRef<any[]>([]);
@@ -428,6 +463,15 @@ export function NorteApp() {
   const pendingVoiceMessageRef = useRef('');
   const pendingAssistantTranscriptRef = useRef('');
   const voiceToolHandledRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      if (pendingMovementDeletion) {
+        clearTimeout(pendingMovementDeletion.timeoutId);
+      }
+    },
+    [pendingMovementDeletion],
+  );
 
   const refreshAssistantHealth = async () => {
     try {
@@ -721,11 +765,20 @@ export function NorteApp() {
   const visibleMovements = useMemo(
     () =>
       sortedMovements.filter(
-        (movement) =>
-          (movementTypeFilter === 'all' || movement.type === movementTypeFilter) &&
-          (movementContextFilter === 'all' || movement.context === movementContextFilter),
+        (movement) => {
+          const search = movementSearch.trim().toLocaleLowerCase('pt-BR');
+          const matchesSearch =
+            !search ||
+            `${movement.title} ${movement.account} ${movement.context} ${movement.source}`.toLocaleLowerCase('pt-BR').includes(search);
+
+          return (
+            matchesSearch &&
+            (movementTypeFilter === 'all' || movement.type === movementTypeFilter) &&
+            (movementContextFilter === 'all' || movement.context === movementContextFilter)
+          );
+        },
       ),
-    [movementContextFilter, movementTypeFilter, sortedMovements],
+    [movementContextFilter, movementSearch, movementTypeFilter, sortedMovements],
   );
   const visibleMovementTotal = sumAmounts(visibleMovements);
   const manualEntryAccount = accountState.find((account) => account.id === manualEntry.accountId) ?? accountState[0] ?? null;
@@ -1395,6 +1448,45 @@ export function NorteApp() {
 
     const pendingDraft = drafts.find((draft) => !draft.context);
     const contextReply = pendingQuestions === 1 ? inferContextReply(trimmed) : null;
+    const correctedAmount = pendingDraft ? parseDraftCorrectionAmount(trimmed) : null;
+
+    if (pendingDraft && correctedAmount) {
+      const reply = `Certo. Atualizei ${pendingDraft.title} para ${currency.format(correctedAmount)}. Revise o rascunho e confirme quando estiver tudo certo.`;
+      const response: AssistantTurnResponse = {
+        assistantMessage: reply,
+        speechText: reply,
+        drafts: [],
+      };
+
+      setDrafts((current) =>
+        current.map((draft) =>
+          draft.id === pendingDraft.id
+            ? { ...draft, amount: correctedAmount, note: 'Valor corrigido, aguardando sua revisao.' }
+            : draft,
+        ),
+      );
+      if (session && supabase) {
+        void updateRemoteDraftAmount(pendingDraft.id, correctedAmount).catch((error) =>
+          setAssistantError(error instanceof Error ? `Corrigi o valor no app, mas nao consegui sincronizar: ${error.message}` : 'Corrigi o valor no app, mas nao consegui sincronizar.'),
+        );
+      }
+
+      if (options?.clearInput) {
+        setAssistantInput('');
+      }
+
+      setMessages((current) => [...current, createMessage('user', trimmed), createMessage('assistant', reply)]);
+      setLastSpeechText(reply);
+
+      if (options?.playTts) {
+        setAssistantMode('responding');
+        void playAssistantSpeech(reply);
+      } else if (options?.awaitRealtimeVoice) {
+        setAssistantMode('responding');
+      }
+
+      return response;
+    }
 
     if (pendingDraft && contextReply) {
       handleDraftContext(pendingDraft.id, contextReply);
@@ -1480,6 +1572,14 @@ export function NorteApp() {
         drafts,
         profile,
         selectedPain,
+        financialContext: {
+          personalBalance,
+          businessBalance,
+          spendableToday,
+          upcomingBillsTotal,
+          upcomingBillsCount: billState.length,
+          overdueBillsCount: overdueBills.length,
+        },
       }, session?.access_token);
 
       let persistedMessages = [createMessage('user', trimmed), createMessage('assistant', result.assistantMessage)];
@@ -1807,60 +1907,77 @@ export function NorteApp() {
   };
 
   const handleConfirmDrafts = async () => {
-    if (drafts.length === 0 || drafts.some((draft) => !draft.context) || accountState.length === 0) {
+    if (isConfirmingDrafts || drafts.length === 0 || drafts.some((draft) => !draft.context) || accountState.length === 0) {
       return;
     }
 
-    const confirmedMovements = drafts.map((draft) => {
-      const baseMovement = buildMovementFromDraft(draft);
-      const account =
-        accountState.find((item) => item.id === draft.walletAccountId) ??
-        pickAccountForContext(accountState, draft.context) ??
-        accountState[0] ??
-        null;
+    setIsConfirmingDrafts(true);
 
-      return {
-        ...baseMovement,
-        account: account?.name ?? baseMovement.account,
-        walletAccountId: account?.id ?? draft.walletAccountId ?? null,
-        cardId: draft.cardId ?? null,
-      } satisfies Movement;
-    });
-    setMovements((current) => [...confirmedMovements, ...current]);
-    setAccountState((current) =>
-      confirmedMovements.reduce((updatedAccounts, movement) => applyMovementToAccounts(updatedAccounts, movement), current),
-    );
-    setDrafts([]);
-    setMessages((current) => [
-      ...current,
-      createMessage('assistant', 'Pronto. Salvei os lancamentos confirmados e atualizei seus saldos locais.'),
-    ]);
-    setAssistantMode('responding');
-    setTimeout(() => setAssistantMode('idle'), 1500);
+    try {
+      const confirmedMovements = drafts.map((draft) => {
+        const baseMovement = buildMovementFromDraft(draft);
+        const account =
+          accountState.find((item) => item.id === draft.walletAccountId) ??
+          pickAccountForContext(accountState, draft.context) ??
+          accountState[0] ??
+          null;
 
-    if (session && supabase) {
-      try {
-        await persistConfirmedDrafts(session, drafts);
-      } catch (error) {
-        setMessages((current) => [
-          ...current,
-          createMessage(
-            'assistant',
-            `Os dados foram atualizados no app, mas houve falha ao sincronizar com a nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
-          ),
-        ]);
+        return {
+          ...baseMovement,
+          account: account?.name ?? baseMovement.account,
+          walletAccountId: account?.id ?? draft.walletAccountId ?? null,
+          cardId: draft.cardId ?? null,
+        } satisfies Movement;
+      });
+      setMovements((current) => [...confirmedMovements, ...current]);
+      setAccountState((current) =>
+        confirmedMovements.reduce((updatedAccounts, movement) => applyMovementToAccounts(updatedAccounts, movement), current),
+      );
+      setDrafts([]);
+      setMessages((current) => [
+        ...current,
+        createMessage('assistant', 'Pronto. Salvei os lancamentos confirmados e atualizei seus saldos locais.'),
+      ]);
+      setAssistantMode('responding');
+      setTimeout(() => setAssistantMode('idle'), 1500);
+
+      if (session && supabase) {
+        try {
+          await persistConfirmedDrafts(session, drafts);
+        } catch (error) {
+          setMessages((current) => [
+            ...current,
+            createMessage(
+              'assistant',
+              `Os dados foram atualizados no app, mas houve falha ao sincronizar com a nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
+            ),
+          ]);
+        }
       }
+    } finally {
+      setIsConfirmingDrafts(false);
     }
   };
 
   const handleSaveManualEntry = async () => {
-    const amount = parseCurrencyInput(manualEntry.amount);
-
-    if (!manualEntry.title.trim() || !amount || !manualEntryAccount) {
-      showNotice('Confira o lancamento', 'Informe uma descricao, um valor valido e escolha a conta que recebeu ou pagou esse movimento.');
+    if (isSavingManualEntry) {
       return;
     }
 
+    const amount = parseCurrencyInput(manualEntry.amount);
+    const entryDate = normalizeEntryDate(manualEntry.date);
+
+    if (!manualEntry.title.trim() || !amount || !manualEntryAccount || !entryDate) {
+      showNotice(
+        'Confira o lancamento',
+        'Informe uma descricao, um valor valido, uma data valida e escolha a conta que recebeu ou pagou esse movimento.',
+      );
+      return;
+    }
+
+    setIsSavingManualEntry(true);
+
+    const previousMovement = editingMovementId ? movements.find((item) => item.id === editingMovementId) : null;
     const movement: Movement = {
       id: editingMovementId ?? `manual-${Date.now()}`,
       title: manualEntry.title.trim(),
@@ -1868,69 +1985,72 @@ export function NorteApp() {
       type: manualEntry.type,
       context: manualEntry.context,
       source: 'Manual',
-      createdAt: new Date().toISOString(),
+      createdAt: buildMovementTimestamp(entryDate, previousMovement?.createdAt),
       account: manualEntryAccount.name,
       walletAccountId: manualEntryAccount.id,
       cardId: manualEntryCard?.id ?? null,
     };
 
-    const previousMovement = editingMovementId ? movements.find((item) => item.id === editingMovementId) : null;
-
-    if (editingMovementId) {
-      setMovements((current) => current.map((item) => (item.id === editingMovementId ? movement : item)));
-      if (previousMovement) {
-        setAccountState((current) =>
-          applyMovementToAccounts(applyMovementToAccounts(current, previousMovement, -1), movement),
-        );
-      }
-    } else {
-      setMovements((current) => [movement, ...current]);
-      setAccountState((current) => applyMovementToAccounts(current, movement));
-    }
-
-    setManualEntry({
-      ...defaultManualEntry,
-      accountId: accountState[0]?.id ?? '',
-    });
-    setShowManualEntry(false);
-    setEditingMovementId(null);
-
-    if (session && supabase) {
-      try {
-        if (editingMovementId) {
-          await updateMovement(session, editingMovementId, {
-            title: movement.title,
-            amount: movement.amount,
-            type: movement.type,
-            context: movement.context,
-            source: movement.source,
-            occurredAt: movement.createdAt,
-            walletAccountId: movement.walletAccountId,
-            cardId: movement.cardId,
-          });
-        } else {
-          await createMovement(session, {
-            title: movement.title,
-            amount: movement.amount,
-            type: movement.type,
-            context: movement.context,
-            source: movement.source,
-            occurredAt: movement.createdAt,
-            walletAccountId: movement.walletAccountId,
-            cardId: movement.cardId,
-          });
+    try {
+      if (editingMovementId) {
+        setMovements((current) => current.map((item) => (item.id === editingMovementId ? movement : item)));
+        if (previousMovement) {
+          setAccountState((current) =>
+            applyMovementToAccounts(applyMovementToAccounts(current, previousMovement, -1), movement),
+          );
         }
-
-        await refreshWorkspaceFromCloud();
-      } catch (error) {
-        setMessages((current) => [
-          ...current,
-          createMessage(
-            'assistant',
-            `Seu lancamento manual entrou no app, mas ainda nao consegui sincronizar com a nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
-          ),
-        ]);
+      } else {
+        setMovements((current) => [movement, ...current]);
+        setAccountState((current) => applyMovementToAccounts(current, movement));
       }
+
+      setManualEntry({
+        ...defaultManualEntry,
+        date: new Date().toISOString().slice(0, 10),
+        accountId: accountState[0]?.id ?? '',
+      });
+      setShowManualEntry(false);
+      setEditingMovementId(null);
+
+      if (session && supabase) {
+        try {
+          if (editingMovementId) {
+            await updateMovement(session, editingMovementId, {
+              title: movement.title,
+              amount: movement.amount,
+              type: movement.type,
+              context: movement.context,
+              source: movement.source,
+              occurredAt: movement.createdAt,
+              walletAccountId: movement.walletAccountId,
+              cardId: movement.cardId,
+            });
+          } else {
+            await createMovement(session, {
+              title: movement.title,
+              amount: movement.amount,
+              type: movement.type,
+              context: movement.context,
+              source: movement.source,
+              occurredAt: movement.createdAt,
+              walletAccountId: movement.walletAccountId,
+              cardId: movement.cardId,
+            });
+          }
+
+          await refreshWorkspaceFromCloud();
+        } catch (error) {
+          setMessages((current) => [
+            ...current,
+            createMessage(
+              'assistant',
+              `Seu lancamento manual entrou no app, mas ainda nao consegui sincronizar com a nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
+            ),
+          ]);
+        }
+      }
+    } finally {
+      setIsSavingManualEntry(false);
     }
   };
 
@@ -1940,6 +2060,7 @@ export function NorteApp() {
     setManualEntry({
       title: movement.title,
       amount: String(movement.amount),
+      date: movement.createdAt.slice(0, 10),
       type: movement.type,
       context: movement.context,
       accountId: movement.walletAccountId ?? accountState.find((account) => account.name === movement.account)?.id ?? accountState[0]?.id ?? '',
@@ -1948,18 +2069,12 @@ export function NorteApp() {
     setActiveTab('moves');
   };
 
-  const handleDeleteMovement = async (movementId: string) => {
-    const current = movements.find((item) => item.id === movementId);
-    if (!current) {
-      return;
-    }
-
-    setMovements((items) => items.filter((item) => item.id !== movementId));
-    setAccountState((items) => applyMovementToAccounts(items, current, -1));
+  const finalizeMovementDeletion = async (movement: Movement) => {
+    setPendingMovementDeletion((current) => (current?.movement.id === movement.id ? null : current));
 
     if (session && supabase) {
       try {
-        await deleteMovement(session, movementId);
+        await deleteMovement(session, movement.id);
         await refreshWorkspaceFromCloud();
       } catch (error) {
         setMessages((items) => [
@@ -1971,6 +2086,35 @@ export function NorteApp() {
         ]);
       }
     }
+  };
+
+  const undoDeleteMovement = () => {
+    if (!pendingMovementDeletion) {
+      return;
+    }
+
+    clearTimeout(pendingMovementDeletion.timeoutId);
+    const { movement } = pendingMovementDeletion;
+    setMovements((items) => [movement, ...items]);
+    setAccountState((items) => applyMovementToAccounts(items, movement));
+    setPendingMovementDeletion(null);
+  };
+
+  const handleDeleteMovement = async (movementId: string) => {
+    const current = movements.find((item) => item.id === movementId);
+    if (!current) {
+      return;
+    }
+
+    if (pendingMovementDeletion) {
+      clearTimeout(pendingMovementDeletion.timeoutId);
+      await finalizeMovementDeletion(pendingMovementDeletion.movement);
+    }
+
+    setMovements((items) => items.filter((item) => item.id !== movementId));
+    setAccountState((items) => applyMovementToAccounts(items, current, -1));
+    const timeoutId = setTimeout(() => void finalizeMovementDeletion(current), 7000);
+    setPendingMovementDeletion({ movement: current, timeoutId });
   };
 
   const requestDeleteMovement = (movementId: string) => {
@@ -2245,25 +2389,92 @@ export function NorteApp() {
     }
 
     const localBill: UpcomingBill = {
-      id: `bill-${Date.now()}`,
+      id: editingBillId ?? `bill-${Date.now()}`,
       title: billForm.title.trim(),
       amount,
       due: billForm.due.trim(),
       context: billForm.context,
     };
 
-    setBillState((items) => [...items, localBill]);
+    const savedBillId = editingBillId;
+    setBillState((items) => (savedBillId ? items.map((bill) => (bill.id === savedBillId ? localBill : bill)) : [...items, localBill]));
     setBillForm(defaultBillForm);
     setShowBillForm(false);
+    setEditingBillId(null);
 
     if (session && supabase) {
       try {
-        await createScheduledBill(session, localBill);
+        if (savedBillId) {
+          await updateScheduledBill(session, savedBillId, localBill);
+        } else {
+          await createScheduledBill(session, localBill);
+        }
         await refreshWorkspaceFromCloud();
       } catch (error) {
         setMessages((items) => [
           ...items,
           createMessage('assistant', `A conta foi criada localmente, mas nao sincronizou com a nuvem: ${error instanceof Error ? error.message : 'erro desconhecido'}.`),
+        ]);
+      }
+    }
+  };
+
+  const handleEditBill = (bill: UpcomingBill) => {
+    setEditingBillId(bill.id);
+    setBillForm({
+      title: bill.title,
+      amount: String(bill.amount),
+      due: bill.due,
+      context: bill.context,
+    });
+    setShowBillForm(true);
+    setActiveTab('plan');
+  };
+
+  const handlePayBill = async (bill: UpcomingBill) => {
+    const account = pickAccountForContext(accountState, bill.context);
+    if (!account) {
+      showNotice('Adicione uma conta', 'Voce precisa de uma conta para registrar o pagamento desse vencimento.');
+      return;
+    }
+
+    const movement: Movement = {
+      id: `bill-payment-${Date.now()}`,
+      title: bill.title,
+      amount: bill.amount,
+      type: 'expense',
+      context: bill.context,
+      source: 'Manual',
+      createdAt: new Date().toISOString(),
+      account: account.name,
+      walletAccountId: account.id,
+      cardId: null,
+    };
+
+    setBillState((items) => items.filter((item) => item.id !== bill.id));
+    setMovements((items) => [movement, ...items]);
+    setAccountState((items) => applyMovementToAccounts(items, movement));
+
+    if (session && supabase) {
+      try {
+        await createMovement(session, {
+          title: movement.title,
+          amount: movement.amount,
+          type: movement.type,
+          context: movement.context,
+          source: movement.source,
+          occurredAt: movement.createdAt,
+          walletAccountId: movement.walletAccountId,
+        });
+        await deleteScheduledBill(session, bill.id);
+        await refreshWorkspaceFromCloud();
+      } catch (error) {
+        setMessages((items) => [
+          ...items,
+          createMessage(
+            'assistant',
+            `O pagamento entrou no app, mas a sincronizacao falhou: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
+          ),
         ]);
       }
     }
@@ -2318,6 +2529,7 @@ export function NorteApp() {
     setEditingGoalId(null);
     setShowBillForm(false);
     setBillForm(defaultBillForm);
+    setEditingBillId(null);
     setMovementTypeFilter('all');
     setMovementContextFilter('all');
   };
@@ -2842,12 +3054,14 @@ export function NorteApp() {
                 <Pressable
                   style={[
                     styles.primaryButton,
-                    (drafts.some((draft) => !draft.context) || accountState.length === 0) && styles.primaryButtonDisabled,
+                    (isConfirmingDrafts || drafts.some((draft) => !draft.context) || accountState.length === 0) && styles.primaryButtonDisabled,
                   ]}
                   onPress={() => void handleConfirmDrafts()}
-                  disabled={drafts.length === 0 || drafts.some((draft) => !draft.context) || accountState.length === 0}
+                  disabled={isConfirmingDrafts || drafts.length === 0 || drafts.some((draft) => !draft.context) || accountState.length === 0}
                 >
-                  <Text style={styles.primaryButtonText}>Confirmar e salvar lancamentos</Text>
+                  <Text style={styles.primaryButtonText}>
+                    {isConfirmingDrafts ? 'Salvando lancamentos...' : 'Confirmar e salvar lancamentos'}
+                  </Text>
                 </Pressable>
               </Card>
 
@@ -2894,6 +3108,13 @@ export function NorteApp() {
                       onChangeText={(value) => setManualEntry((current) => ({ ...current, amount: value }))}
                       placeholder="Valor"
                       keyboardType="decimal-pad"
+                      placeholderTextColor={palette.textMuted}
+                      style={styles.field}
+                    />
+                    <TextInput
+                      value={manualEntry.date}
+                      onChangeText={(value) => setManualEntry((current) => ({ ...current, date: value }))}
+                      placeholder="Data (AAAA-MM-DD ou DD/MM/AAAA)"
                       placeholderTextColor={palette.textMuted}
                       style={styles.field}
                     />
@@ -2957,8 +3178,14 @@ export function NorteApp() {
                         </View>
                       </View>
                     ) : null}
-                    <Pressable style={styles.primaryButtonCompact} onPress={() => void handleSaveManualEntry()}>
-                      <Text style={styles.primaryButtonText}>{editingMovementId ? 'Atualizar movimento' : 'Salvar lancamento'}</Text>
+                    <Pressable
+                      style={[styles.primaryButtonCompact, isSavingManualEntry && styles.primaryButtonDisabled]}
+                      onPress={() => void handleSaveManualEntry()}
+                      disabled={isSavingManualEntry}
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        {isSavingManualEntry ? 'Salvando...' : editingMovementId ? 'Atualizar movimento' : 'Salvar lancamento'}
+                      </Text>
                     </Pressable>
                   </View>
                 )}
@@ -2985,6 +3212,13 @@ export function NorteApp() {
                   <Pill label="Negocio" selected={movementContextFilter === 'Negocio'} onPress={() => setMovementContextFilter('Negocio')} />
                   <Pill label="Compartilhado" selected={movementContextFilter === 'Compartilhado'} onPress={() => setMovementContextFilter('Compartilhado')} />
                 </View>
+                <TextInput
+                  value={movementSearch}
+                  onChangeText={setMovementSearch}
+                  placeholder="Buscar por descricao, conta ou contexto"
+                  placeholderTextColor={palette.textMuted}
+                  style={styles.field}
+                />
                 <View style={styles.detailStack}>
                   {visibleMovements.length > 0 ? (
                     visibleMovements.map((movement) => (
@@ -3002,6 +3236,17 @@ export function NorteApp() {
                     </View>
                   )}
                 </View>
+                {pendingMovementDeletion ? (
+                  <View style={styles.undoBar}>
+                    <View style={styles.flexOne}>
+                      <Text style={styles.undoTitle}>Movimento removido</Text>
+                      <Text style={styles.undoText}>O saldo foi recalculado. Voce ainda pode desfazer.</Text>
+                    </View>
+                    <Pressable onPress={undoDeleteMovement} style={styles.undoButton}>
+                      <Text style={styles.undoButtonText}>Desfazer</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
               </Card>
             </View>
           )}
@@ -3316,7 +3561,15 @@ export function NorteApp() {
               <Card variant="soft">
                 <View style={styles.rowBetween}>
                   <Text style={styles.cardTitle}>Contas futuras</Text>
-                  <Pressable onPress={() => setShowBillForm((value) => !value)}>
+                  <Pressable
+                    onPress={() => {
+                      if (showBillForm) {
+                        setEditingBillId(null);
+                        setBillForm(defaultBillForm);
+                      }
+                      setShowBillForm((value) => !value);
+                    }}
+                  >
                     <Text style={styles.inlineLink}>{showBillForm ? 'Fechar' : 'Nova conta'}</Text>
                   </Pressable>
                 </View>
@@ -3358,7 +3611,7 @@ export function NorteApp() {
                       </View>
                     </View>
                     <Pressable style={styles.primaryButtonCompact} onPress={handleSaveBill}>
-                      <Text style={styles.primaryButtonText}>Salvar conta futura</Text>
+                      <Text style={styles.primaryButtonText}>{editingBillId ? 'Atualizar conta futura' : 'Salvar conta futura'}</Text>
                     </Pressable>
                   </View>
                 ) : null}
@@ -3374,9 +3627,25 @@ export function NorteApp() {
                         </View>
                         <View style={styles.billItemSide}>
                           <Text style={styles.amountNegative}>{currency.format(bill.amount)}</Text>
-                          <Pressable onPress={() => handleDeleteBill(bill.id)}>
-                            <Text style={styles.inlineDanger}>Excluir</Text>
-                          </Pressable>
+                          <View style={styles.inlineActions}>
+                            <Pressable
+                              onPress={() =>
+                                confirmDestructiveAction(
+                                  'Marcar como paga?',
+                                  `Vou registrar ${currency.format(bill.amount)} como despesa e atualizar o saldo da ${pickAccountForContext(accountState, bill.context)?.name ?? 'conta selecionada'}.`,
+                                  () => handlePayBill(bill),
+                                )
+                              }
+                            >
+                              <Text style={styles.inlineLink}>Pagar</Text>
+                            </Pressable>
+                            <Pressable onPress={() => handleEditBill(bill)}>
+                              <Text style={styles.inlineLink}>Editar</Text>
+                            </Pressable>
+                            <Pressable onPress={() => handleDeleteBill(bill.id)}>
+                              <Text style={styles.inlineDanger}>Excluir</Text>
+                            </Pressable>
+                          </View>
                         </View>
                       </View>
                     ))
@@ -5200,6 +5469,37 @@ function createStyles(palette: ThemePalette) {
     flexDirection: 'row',
     gap: spacing.md,
     alignItems: 'center',
+  },
+  undoBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceStrong,
+    padding: spacing.md,
+  },
+  undoTitle: {
+    color: palette.id === 'light' ? '#FFFFFF' : palette.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  undoText: {
+    color: palette.id === 'light' ? 'rgba(255,255,255,0.72)' : palette.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 3,
+  },
+  undoButton: {
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    borderRadius: radius.pill,
+    backgroundColor: palette.id === 'light' ? '#FFFFFF' : palette.background,
+  },
+  undoButtonText: {
+    color: palette.id === 'light' ? '#111111' : palette.text,
+    fontSize: 13,
+    fontWeight: '700',
   },
   inlineDanger: {
     color: palette.danger,

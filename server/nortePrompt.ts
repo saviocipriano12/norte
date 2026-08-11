@@ -46,6 +46,7 @@ export function buildNorteUserPrompt(payload: {
   historyText: string;
   movementsText: string;
   draftsText: string;
+  financialContextText: string;
 }) {
   return `
 Perfil do usuario: ${payload.profile}
@@ -60,9 +61,12 @@ ${payload.movementsText || 'Sem movimentos anteriores.'}
 Rascunhos pendentes:
 ${payload.draftsText || 'Sem rascunhos pendentes.'}
 
+Resumo financeiro calculado pelo app:
+${payload.financialContextText}
+
 Nova mensagem do usuario:
 ${payload.message}
 
-Responda como Norte e gere rascunhos apenas se houver fatos financeiros concretos.
+Responda como Norte e gere rascunhos apenas se houver fatos financeiros concretos. Quando a pessoa perguntar sobre limite de gasto, saldo ou vencimentos, use exclusivamente o resumo financeiro calculado pelo app; nao invente numeros.
 `.trim();
 }

@@ -48,6 +48,20 @@ function serializeDrafts(drafts: AssistantTurnRequest['drafts']) {
     .join('\n');
 }
 
+function serializeFinancialContext(context: AssistantTurnRequest['financialContext']) {
+  if (!context) {
+    return 'O resumo financeiro ainda nao esta disponivel.';
+  }
+
+  return [
+    `Saldo pessoal atual: R$ ${context.personalBalance.toFixed(2)}`,
+    `Caixa atual do negocio: R$ ${context.businessBalance.toFixed(2)}`,
+    `Disponivel para gastar hoje: R$ ${context.spendableToday.toFixed(2)}`,
+    `Contas futuras: ${context.upcomingBillsCount} no total de R$ ${context.upcomingBillsTotal.toFixed(2)}`,
+    `Contas vencidas: ${context.overdueBillsCount}`,
+  ].join('\n');
+}
+
 function normalizeDrafts(drafts: Array<z.infer<typeof norteDraftSchema>>): DraftEntry[] {
   return drafts
     .filter((draft) => Number.isFinite(draft.amount) && draft.amount > 0)
@@ -88,6 +102,7 @@ export async function generateNorteAssistantTurn(
       historyText: serializeHistory(payload.history),
       movementsText: serializeMovements(payload.movements),
       draftsText: serializeDrafts(payload.drafts),
+      financialContextText: serializeFinancialContext(payload.financialContext),
     }),
     text: {
       format: zodTextFormat(norteResponseSchema, 'norte_assistant_response'),

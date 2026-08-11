@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { applyMovementToAccounts, parseCurrencyInput, parseFinanceMessage } from '../src/financeEngine.ts';
+import { applyMovementToAccounts, parseCurrencyInput, parseDraftCorrectionAmount, parseFinanceMessage } from '../src/financeEngine.ts';
 import { initialAccounts } from '../src/mockData.ts';
 
 const result = parseFinanceMessage('gastei R$ 40,50 na padaria e recebi 1.250,75 do cliente');
@@ -12,6 +12,8 @@ assert.equal(result.drafts[1].context, 'Negocio');
 assert.equal(parseCurrencyInput('40.50'), 40.5);
 assert.equal(parseCurrencyInput('1.250,75'), 1250.75);
 assert.equal(parseCurrencyInput('R$ 2,40'), 2.4);
+assert.equal(parseDraftCorrectionAmount('Nao, foi R$ 90, nao R$ 80.'), 90);
+assert.equal(parseDraftCorrectionAmount('Pode colocar como despesa do negocio.'), null);
 
 const expense = {
   id: 'test-expense',

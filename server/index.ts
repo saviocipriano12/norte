@@ -111,6 +111,16 @@ const assistantTurnRequestSchema = z.object({
   ),
   profile: z.enum(['personal', 'freelancer', 'business']),
   selectedPain: z.array(z.string()),
+  financialContext: z
+    .object({
+      personalBalance: z.number(),
+      businessBalance: z.number(),
+      spendableToday: z.number().min(0),
+      upcomingBillsTotal: z.number().min(0),
+      upcomingBillsCount: z.number().int().min(0),
+      overdueBillsCount: z.number().int().min(0),
+    })
+    .optional(),
 });
 
 const assistantSyncRequestSchema = z.object({

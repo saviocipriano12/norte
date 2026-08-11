@@ -394,6 +394,22 @@ export async function updateRemoteDraftContext(draftId: string, context: DraftEn
     .eq('id', draftId);
 }
 
+export async function updateRemoteDraftAmount(draftId: string, amount: number) {
+  const client = requireSupabase();
+  const { error } = await client
+    .from('transaction_drafts')
+    .update({
+      amount,
+      note: 'Valor corrigido, aguardando sua revisao.',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', draftId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function deleteRemoteDraft(draftId: string) {
   const client = requireSupabase();
   await client.from('transaction_drafts').delete().eq('id', draftId);
@@ -675,6 +691,34 @@ export async function createScheduledBill(session: Session, input: UpcomingBillI
 
   if (error || !data) {
     throw new Error(error?.message || 'Nao foi possivel criar a conta futura.');
+  }
+
+  return {
+    id: data.id as string,
+    title: data.title as string,
+    amount: Number(data.amount),
+    due: data.due_date as string,
+    context: data.context as UpcomingBill['context'],
+  } satisfies UpcomingBill;
+}
+
+export async function updateScheduledBill(session: Session, billId: string, input: UpcomingBillInput) {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from('scheduled_bills')
+    .update({
+      title: input.title,
+      amount: input.amount,
+      due_date: input.due,
+      context: input.context,
+    })
+    .eq('user_id', session.user.id)
+    .eq('id', billId)
+    .select('*')
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Nao foi possivel atualizar a conta futura.');
   }
 
   return {

@@ -99,6 +99,24 @@ function parseAmount(segment: string) {
   return Number(normalized);
 }
 
+export function parseDraftCorrectionAmount(input: string) {
+  const normalized = normalizeText(input);
+  if (!/(nao|corrig|correc|era|foi|valor)/.test(normalized)) {
+    return null;
+  }
+
+  const matches = Array.from(
+    input.matchAll(/(?:r\$\s*)?((?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d{1,2})?)(?:\s*reais?)?/gi),
+  );
+  const firstAmount = matches[0]?.[0];
+  if (!firstAmount) {
+    return null;
+  }
+
+  const amount = parseAmount(firstAmount);
+  return amount && Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
 function inferType(normalizedSegment: string): 'income' | 'expense' | null {
   if (incomeVerbs.some((verb) => normalizedSegment.includes(verb))) {
     return 'income';
