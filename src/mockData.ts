@@ -136,6 +136,13 @@ export type Goal = {
   targetDate?: string | null;
 };
 
+export type CategoryBudget = {
+  id: string;
+  category: string;
+  monthlyLimit: number;
+  context?: EntryContext | null;
+};
+
 export const onboardingProfiles = [
   {
     id: 'personal',
