@@ -195,6 +195,16 @@ function buildNote(type: 'income' | 'expense', hasQuestion: boolean) {
   return hasQuestion ? 'Despesa identificada, aguardando contexto.' : 'Despesa pronta para confirmacao.';
 }
 
+export function inferOccurrenceDate(segment: string, referenceDate = new Date()) {
+  const result = new Date(referenceDate);
+  const normalized = normalizeText(segment);
+  if (/\bontem\b/.test(normalized)) result.setDate(result.getDate() - 1);
+  if (/\bmes que vem\b/.test(normalized)) result.setMonth(result.getMonth() + 1);
+  const day = normalized.match(/\bdia\s+(\d{1,2})\b/);
+  if (day) result.setDate(Number(day[1]));
+  return `${result.getFullYear()}-${String(result.getMonth() + 1).padStart(2, '0')}-${String(result.getDate()).padStart(2, '0')}`;
+}
+
 export function parseFinanceMessage(input: string) {
   const prepared = input.replace(
     /\s+e\s+(?=(gastei|paguei|comprei|recebi|ganhei|entrou|caiu|vendi|me pagaram)\b)/gi,
@@ -226,6 +236,7 @@ export function parseFinanceMessage(input: string) {
       context: contextInfo.context,
       question: contextInfo.question,
       note: buildNote(type, Boolean(contextInfo.question)),
+      occurredAt: inferOccurrenceDate(segment),
     });
   });
 
@@ -316,7 +327,7 @@ export function buildMovementFromDraft(draft: DraftEntry): Movement {
     type: draft.type,
     context: draft.context ?? 'Pessoal',
     source: 'IA',
-    createdAt: new Date().toISOString(),
+    createdAt: `${draft.occurredAt ?? inferOccurrenceDate('')}T12:00:00.000Z`,
     account: resolveMovementAccount(draft.context ?? 'Pessoal'),
     walletAccountId: draft.walletAccountId ?? null,
     cardId: draft.cardId ?? null,

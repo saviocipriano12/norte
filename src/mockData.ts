@@ -16,6 +16,7 @@ export type DraftEntry = {
   context?: EntryContext;
   question?: string;
   note: string;
+  occurredAt?: string;
   walletAccountId?: string | null;
   cardId?: string | null;
 };
@@ -56,6 +57,7 @@ export type UpcomingBill = {
   due: string;
   amount: number;
   context: EntryContext;
+  isRecurring: boolean;
 };
 
 export type Goal = {
@@ -198,6 +200,7 @@ export const upcomingBills: UpcomingBill[] = [
     due: '2026-08-11',
     amount: 120,
     context: 'Compartilhado',
+    isRecurring: true,
   },
   {
     id: 'u2',
@@ -205,6 +208,7 @@ export const upcomingBills: UpcomingBill[] = [
     due: '2026-08-14',
     amount: 76,
     context: 'Negocio',
+    isRecurring: true,
   },
   {
     id: 'u3',
@@ -212,6 +216,7 @@ export const upcomingBills: UpcomingBill[] = [
     due: '2026-08-18',
     amount: 1450,
     context: 'Pessoal',
+    isRecurring: true,
   },
 ];
 

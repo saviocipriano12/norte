@@ -60,7 +60,7 @@ type UserProfileInput = {
 };
 
 type GoalInput = Pick<Goal, 'title' | 'target' | 'current' | 'status'>;
-type UpcomingBillInput = Pick<UpcomingBill, 'title' | 'amount' | 'due' | 'context'>;
+type UpcomingBillInput = Pick<UpcomingBill, 'title' | 'amount' | 'due' | 'context' | 'isRecurring'>;
 
 function requireSupabase() {
   if (!supabase) {
@@ -258,6 +258,7 @@ export async function loadWorkspaceSnapshot(userId: string): Promise<WorkspaceSn
             amount: Number(bill.amount),
             due: bill.due_date as string,
             context: (bill.context as UpcomingBill['context'] | null) ?? 'Pessoal',
+            isRecurring: Boolean(bill.is_recurring),
           }))
         : [],
     movements: (movements ?? []).map((movement) => movementRowToApp(movement as never, accountMap)),
@@ -485,7 +486,7 @@ export async function persistConfirmedDrafts(session: Session, drafts: DraftEntr
       type: draft.type,
       context: draft.context ?? 'Pessoal',
       source: 'IA',
-      occurred_at: new Date().toISOString(),
+      occurred_at: `${draft.occurredAt ?? new Date().toISOString().slice(0, 10)}T12:00:00.000Z`,
       draft_id: isUuid(draft.id) ? draft.id : null,
     });
 
@@ -690,6 +691,7 @@ export async function createScheduledBill(session: Session, input: UpcomingBillI
       amount: input.amount,
       due_date: input.due,
       context: input.context,
+      is_recurring: input.isRecurring,
     })
     .select('*')
     .single();
@@ -704,6 +706,7 @@ export async function createScheduledBill(session: Session, input: UpcomingBillI
     amount: Number(data.amount),
     due: data.due_date as string,
     context: data.context as UpcomingBill['context'],
+    isRecurring: Boolean(data.is_recurring),
   } satisfies UpcomingBill;
 }
 
@@ -716,6 +719,7 @@ export async function updateScheduledBill(session: Session, billId: string, inpu
       amount: input.amount,
       due_date: input.due,
       context: input.context,
+      is_recurring: input.isRecurring,
     })
     .eq('user_id', session.user.id)
     .eq('id', billId)
@@ -732,6 +736,7 @@ export async function updateScheduledBill(session: Session, billId: string, inpu
     amount: Number(data.amount),
     due: data.due_date as string,
     context: data.context as UpcomingBill['context'],
+    isRecurring: Boolean(data.is_recurring),
   } satisfies UpcomingBill;
 }
 

@@ -137,10 +137,13 @@ type BillFormState = {
   amount: string;
   due: string;
   context: EntryContext;
+  isRecurring: boolean;
 };
 
 type MovementTypeFilter = 'all' | 'income' | 'expense';
 type MovementContextFilter = 'all' | EntryContext;
+type MovementPeriodFilter = 'all' | 'today' | 'week' | 'month';
+type MovementSort = 'newest' | 'oldest' | 'highest' | 'lowest';
 type FinancialHealth = 'starting' | 'healthy' | 'stable' | 'attention' | 'critical';
 type PendingMovementDeletion = {
   movement: Movement;
@@ -238,6 +241,7 @@ const defaultBillForm: BillFormState = {
   amount: '',
   due: '',
   context: 'Pessoal',
+  isRecurring: false,
 };
 
 function sumAmounts(items: Array<{ amount: number }>) {
@@ -312,6 +316,31 @@ function buildMovementTimestamp(date: string, previousTimestamp?: string) {
   return `${date}T${time}`;
 }
 
+function isMovementInPeriod(createdAt: string, period: MovementPeriodFilter) {
+  if (period === 'all') {
+    return true;
+  }
+
+  const movementDate = new Date(createdAt);
+  if (Number.isNaN(movementDate.getTime())) {
+    return false;
+  }
+
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (period === 'today') {
+    return movementDate >= startToday;
+  }
+
+  if (period === 'week') {
+    const startWeek = new Date(startToday);
+    startWeek.setDate(startWeek.getDate() - ((startWeek.getDay() + 6) % 7));
+    return movementDate >= startWeek;
+  }
+
+  return movementDate.getFullYear() === now.getFullYear() && movementDate.getMonth() === now.getMonth();
+}
+
 function formatBillDue(value: string) {
   const date = isValidIsoDate(value) ? new Date(`${value}T12:00:00`) : null;
 
@@ -344,6 +373,16 @@ function isBillOverdue(value: string) {
   const today = new Date();
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   return due < startOfToday;
+}
+
+function nextRecurringDue(value: string) {
+  if (!isValidIsoDate(value)) {
+    return value;
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  const nextMonthLastDay = new Date(year, month + 1, 0).getDate();
+  return new Date(year, month, Math.min(day, nextMonthLastDay)).toISOString().slice(0, 10);
 }
 
 function pickAccountForContext(accounts: Account[], context: EntryContext | undefined) {
@@ -439,6 +478,9 @@ export function NorteApp() {
   const [editingBillId, setEditingBillId] = useState<string | null>(null);
   const [movementTypeFilter, setMovementTypeFilter] = useState<MovementTypeFilter>('all');
   const [movementContextFilter, setMovementContextFilter] = useState<MovementContextFilter>('all');
+  const [movementPeriodFilter, setMovementPeriodFilter] = useState<MovementPeriodFilter>('all');
+  const [movementAccountFilter, setMovementAccountFilter] = useState('all');
+  const [movementSort, setMovementSort] = useState<MovementSort>('newest');
   const [movementSearch, setMovementSearch] = useState('');
   const [pendingMovementDeletion, setPendingMovementDeletion] = useState<PendingMovementDeletion | null>(null);
   const [isSavingManualEntry, setIsSavingManualEntry] = useState(false);
@@ -511,7 +553,7 @@ export function NorteApp() {
         setAccountState(saved.accounts);
         setCardState(saved.cards ?? initialCards);
         setGoalState(saved.goals ?? goals);
-        setBillState((saved.upcomingBills ?? upcomingBills).map((bill) => ({ ...bill, context: bill.context ?? 'Pessoal' })));
+        setBillState((saved.upcomingBills ?? upcomingBills).map((bill) => ({ ...bill, context: bill.context ?? 'Pessoal', isRecurring: bill.isRecurring ?? false })));
         setAssistantInput(saved.assistantInput);
       }
 
@@ -760,10 +802,27 @@ export function NorteApp() {
     .map((part) => part[0]?.toUpperCase())
     .join('');
   const userFirstName = userDisplayName.split(' ')[0] ?? userDisplayName;
-  const sortedMovements = useMemo(
-    () => [...movements].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [movements],
-  );
+  const sortedMovements = useMemo(() => {
+    const result = [...movements];
+
+    result.sort((left, right) => {
+      if (movementSort === 'oldest') {
+        return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+      }
+
+      if (movementSort === 'highest') {
+        return right.amount - left.amount;
+      }
+
+      if (movementSort === 'lowest') {
+        return left.amount - right.amount;
+      }
+
+      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+    });
+
+    return result;
+  }, [movementSort, movements]);
   const visibleMovements = useMemo(
     () =>
       sortedMovements.filter(
@@ -776,13 +835,18 @@ export function NorteApp() {
           return (
             matchesSearch &&
             (movementTypeFilter === 'all' || movement.type === movementTypeFilter) &&
-            (movementContextFilter === 'all' || movement.context === movementContextFilter)
+            (movementContextFilter === 'all' || movement.context === movementContextFilter) &&
+            (movementAccountFilter === 'all' || movement.walletAccountId === movementAccountFilter) &&
+            isMovementInPeriod(movement.createdAt, movementPeriodFilter)
           );
         },
       ),
-    [movementContextFilter, movementSearch, movementTypeFilter, sortedMovements],
+    [movementAccountFilter, movementContextFilter, movementPeriodFilter, movementSearch, movementTypeFilter, sortedMovements],
   );
-  const visibleMovementTotal = sumAmounts(visibleMovements);
+  const visibleMovementTotal = visibleMovements.reduce(
+    (total, movement) => total + (movement.type === 'income' ? movement.amount : -movement.amount),
+    0,
+  );
   const manualEntryAccount = accountState.find((account) => account.id === manualEntry.accountId) ?? accountState[0] ?? null;
   const manualEntryCard = cardState.find((card) => card.id === manualEntry.cardId) ?? null;
 
@@ -2435,6 +2499,7 @@ export function NorteApp() {
       amount,
       due: billForm.due.trim(),
       context: billForm.context,
+      isRecurring: billForm.isRecurring,
     };
 
     const savedBillId = editingBillId;
@@ -2467,6 +2532,7 @@ export function NorteApp() {
       amount: String(bill.amount),
       due: bill.due,
       context: bill.context,
+      isRecurring: bill.isRecurring,
     });
     setShowBillForm(true);
     setActiveTab('plan');
@@ -2492,7 +2558,8 @@ export function NorteApp() {
       cardId: null,
     };
 
-    setBillState((items) => items.filter((item) => item.id !== bill.id));
+    const nextBill = bill.isRecurring ? { ...bill, due: nextRecurringDue(bill.due) } : null;
+    setBillState((items) => (nextBill ? items.map((item) => (item.id === bill.id ? nextBill : item)) : items.filter((item) => item.id !== bill.id)));
     setMovements((items) => [movement, ...items]);
     setAccountState((items) => applyMovementToAccounts(items, movement));
 
@@ -2507,7 +2574,11 @@ export function NorteApp() {
           occurredAt: movement.createdAt,
           walletAccountId: movement.walletAccountId,
         });
-        await deleteScheduledBill(session, bill.id);
+        if (nextBill) {
+          await updateScheduledBill(session, bill.id, nextBill);
+        } else {
+          await deleteScheduledBill(session, bill.id);
+        }
         await refreshWorkspaceFromCloud();
       } catch (error) {
         setMessages((items) => [
@@ -2575,6 +2646,10 @@ export function NorteApp() {
     setEditingBillId(null);
     setMovementTypeFilter('all');
     setMovementContextFilter('all');
+    setMovementPeriodFilter('all');
+    setMovementAccountFilter('all');
+    setMovementSort('newest');
+    setMovementSearch('');
   };
 
   const sortedGoals = useMemo(
@@ -3245,7 +3320,8 @@ export function NorteApp() {
                   <View>
                     <Text style={styles.cardTitle}>Historico de movimentos</Text>
                     <Text style={styles.mutedText}>
-                      {visibleMovements.length} itens · {currency.format(visibleMovementTotal)} no filtro atual
+                      {visibleMovements.length} itens · {visibleMovementTotal >= 0 ? '+' : '-'}
+                      {currency.format(Math.abs(visibleMovementTotal))} de resultado no filtro
                     </Text>
                   </View>
                   <Ionicons name="filter-outline" size={18} color={palette.textMuted} />
@@ -3260,6 +3336,37 @@ export function NorteApp() {
                   <Pill label="Pessoal" selected={movementContextFilter === 'Pessoal'} onPress={() => setMovementContextFilter('Pessoal')} />
                   <Pill label="Negocio" selected={movementContextFilter === 'Negocio'} onPress={() => setMovementContextFilter('Negocio')} />
                   <Pill label="Compartilhado" selected={movementContextFilter === 'Compartilhado'} onPress={() => setMovementContextFilter('Compartilhado')} />
+                </View>
+                <View style={styles.pillRow}>
+                  <Pill label="Todo periodo" selected={movementPeriodFilter === 'all'} onPress={() => setMovementPeriodFilter('all')} />
+                  <Pill label="Hoje" selected={movementPeriodFilter === 'today'} onPress={() => setMovementPeriodFilter('today')} />
+                  <Pill label="Semana" selected={movementPeriodFilter === 'week'} onPress={() => setMovementPeriodFilter('week')} />
+                  <Pill label="Este mes" selected={movementPeriodFilter === 'month'} onPress={() => setMovementPeriodFilter('month')} />
+                </View>
+                {accountState.length > 0 ? (
+                  <View style={styles.selectionBlock}>
+                    <Text style={styles.mutedText}>Conta</Text>
+                    <View style={styles.pillRow}>
+                      <Pill label="Todas" selected={movementAccountFilter === 'all'} onPress={() => setMovementAccountFilter('all')} />
+                      {accountState.map((account) => (
+                        <Pill
+                          key={account.id}
+                          label={account.name}
+                          selected={movementAccountFilter === account.id}
+                          onPress={() => setMovementAccountFilter(account.id)}
+                        />
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
+                <View style={styles.selectionBlock}>
+                  <Text style={styles.mutedText}>Ordenar</Text>
+                  <View style={styles.pillRow}>
+                    <Pill label="Recentes" selected={movementSort === 'newest'} onPress={() => setMovementSort('newest')} />
+                    <Pill label="Antigos" selected={movementSort === 'oldest'} onPress={() => setMovementSort('oldest')} />
+                    <Pill label="Maior valor" selected={movementSort === 'highest'} onPress={() => setMovementSort('highest')} />
+                    <Pill label="Menor valor" selected={movementSort === 'lowest'} onPress={() => setMovementSort('lowest')} />
+                  </View>
                 </View>
                 <TextInput
                   value={movementSearch}
@@ -3705,6 +3812,21 @@ export function NorteApp() {
                         ))}
                       </View>
                     </View>
+                    <View style={styles.selectionBlock}>
+                      <Text style={styles.mutedText}>Frequencia</Text>
+                      <View style={styles.pillRow}>
+                        <Pill
+                          label="Uma vez"
+                          selected={!billForm.isRecurring}
+                          onPress={() => setBillForm((current) => ({ ...current, isRecurring: false }))}
+                        />
+                        <Pill
+                          label="Todo mes"
+                          selected={billForm.isRecurring}
+                          onPress={() => setBillForm((current) => ({ ...current, isRecurring: true }))}
+                        />
+                      </View>
+                    </View>
                     <Pressable style={styles.primaryButtonCompact} onPress={handleSaveBill}>
                       <Text style={styles.primaryButtonText}>{editingBillId ? 'Atualizar conta futura' : 'Salvar conta futura'}</Text>
                     </Pressable>
@@ -3717,7 +3839,8 @@ export function NorteApp() {
                         <View style={styles.flexOne}>
                           <Text style={styles.cardTitle}>{bill.title}</Text>
                           <Text style={styles.mutedText}>
-                            Vence {formatBillDue(bill.due)} / {bill.context}
+                            {isBillOverdue(bill.due) ? 'Vencida' : `Vence ${formatBillDue(bill.due)}`} / {bill.context}
+                            {bill.isRecurring ? ' / Todo mes' : ''}
                           </Text>
                         </View>
                         <View style={styles.billItemSide}>
